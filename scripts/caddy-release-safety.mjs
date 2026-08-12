@@ -1,13 +1,22 @@
 export const CADDY_TEMPLATE_PATH = "deploy/caddy/nodel-mcp.Caddyfile.in";
 const CADDY_RELEASE_SCRIPTS = new Set(["scripts/caddy-render.mjs", "scripts/caddy-check.mjs"]);
 
+function isGeneratedCaddyfile(basename) {
+  const lowerCase = basename.toLowerCase();
+  return (
+    lowerCase === "caddyfile" ||
+    (lowerCase.startsWith("caddyfile.") && lowerCase.length > "caddyfile.".length) ||
+    (lowerCase.endsWith(".caddy") && lowerCase.length > ".caddy".length)
+  );
+}
+
 export function isForbiddenCaddyReleaseMember(member) {
   const normalized = member.replaceAll("\\", "/");
   const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
   return (
     /^(?:caddy(?:\.exe)?|caddy[-_][^/]+)$/iu.test(basename) ||
     /^caddy[^/]*\.(?:tar|tar\.gz|tgz|zip|deb|rpm)$/iu.test(basename) ||
-    /^(?:caddyfile(?:\.[^/]+)*|[^/]+\.caddy)$/iu.test(basename) ||
+    isGeneratedCaddyfile(basename) ||
     /\.(?:pem|key|crt|cer|der|p12|pfx|p7b|csr)$/iu.test(basename) ||
     /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|.*private.*)$/iu.test(basename)
   );

@@ -6,6 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+import { checkServerIdentity } from "node:tls";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
@@ -37,12 +38,75 @@ import {
   renderCaddyfile,
   writeRenderedOutput,
 } from "../scripts/caddy-render.mjs";
+import { isForbiddenCaddyReleaseMember } from "../scripts/caddy-release-safety.mjs";
 
 const template = await readFile(
   fileURLToPath(new URL("../deploy/caddy/nodel-mcp.Caddyfile.in", import.meta.url)),
   "utf8",
 );
 const options = { hostname: "lan.example", bindAddress: "198.51.100.5", allowCidrs: ["198.51.100.0/24", "fd00::/8"] };
+const MAX_CADDY_LOCAL_ROOT_BYTES = 1024 * 1024;
+
+test("test sources never disable TLS certificate verification", async () => {
+  const testDirectory = dirname(fileURLToPath(import.meta.url));
+  const sources = await Promise.all(
+    (await readdir(testDirectory, { recursive: true }))
+      .filter((entry) => /\.test\.(?:mjs|ts)$/u.test(entry))
+      .map((entry) => readFile(join(testDirectory, entry), "utf8")),
+  );
+  const disabledCertificateVerification = ["rejectUnauthorized", "\\s*:", "\\s*", "false"].join("");
+  const globalTlsBypass = ["NODE_TLS", "_REJECT", "_UNAUTHORIZED"].join("");
+  for (const source of sources) {
+    assert.doesNotMatch(source, new RegExp(disabledCertificateVerification, "u"));
+    assert.doesNotMatch(source, new RegExp(globalTlsBypass, "u"));
+  }
+});
+
+test("generated Caddyfile detection remains linear for long adversarial basenames", () => {
+  const longSuffix = ".artifact".repeat(50_000);
+  assert.equal(isForbiddenCaddyReleaseMember(`caddyfile${longSuffix}`), true);
+  assert.equal(isForbiddenCaddyReleaseMember(`caddyfile${longSuffix}.`), true);
+  assert.equal(isForbiddenCaddyReleaseMember("caddyfile."), false);
+  assert.equal(isForbiddenCaddyReleaseMember("caddyfile.."), true);
+  assert.equal(isForbiddenCaddyReleaseMember("generated.caddy"), true);
+  assert.equal(isForbiddenCaddyReleaseMember(".caddy"), false);
+  assert.equal(isForbiddenCaddyReleaseMember(`not-caddyfile${longSuffix}`), false);
+});
+
+test("Caddy local root reader rejects unsafe certificate files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "nodel-caddy-root-"));
+  const rootCertificate = caddyLocalRootPath(directory);
+  const parent = dirname(rootCertificate);
+  const expectedFailure = /Caddy local root certificate is unavailable/u;
+  try {
+    await mkdir(parent, { recursive: true });
+
+    const target = join(directory, "root-target.crt");
+    await writeFile(target, "certificate");
+    await symlink(target, rootCertificate);
+    await assert.rejects(() => readCaddyLocalRoot(rootCertificate), expectedFailure);
+
+    await rm(rootCertificate);
+    if (process.platform !== "win32") {
+      assert.equal(spawnSync("mkfifo", [rootCertificate]).status, 0);
+      await assert.rejects(() => readCaddyLocalRoot(rootCertificate), expectedFailure);
+      await rm(rootCertificate);
+    }
+
+    await mkdir(rootCertificate);
+    await assert.rejects(() => readCaddyLocalRoot(rootCertificate), expectedFailure);
+
+    await rm(rootCertificate, { recursive: true });
+    await writeFile(rootCertificate, "");
+    await assert.rejects(() => readCaddyLocalRoot(rootCertificate), expectedFailure);
+
+    await rm(rootCertificate);
+    await writeFile(rootCertificate, Buffer.alloc(MAX_CADDY_LOCAL_ROOT_BYTES + 1));
+    await assert.rejects(() => readCaddyLocalRoot(rootCertificate), expectedFailure);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("renderer supports IPv4, IPv6, repeated CIDRs, and deterministic bytes", () => {
   const output = renderCaddyfile(template.replaceAll("\n", "\r\n"), {
@@ -753,16 +817,18 @@ test("optional real Caddy forwards Authorization and Origin to the loopback side
     processHandle.stderr.on("data", (chunk) => {
       caddyDiagnostics += chunk.toString();
     });
-    const requestOnce = (path, includeOrigin = true) =>
+    const ca = await waitForCaddyLocalRoot(directory);
+    const requestOnce = (path, includeOrigin = true, servername = "localhost", verifyIdentity) =>
       new Promise((resolve, reject) => {
         const request = httpsRequest(
           {
             hostname: "127.0.0.1",
             port: caddyPort,
-            servername: "localhost",
+            servername,
             path,
             method: "GET",
-            rejectUnauthorized: false,
+            ca,
+            ...(verifyIdentity ? { checkServerIdentity: verifyIdentity } : {}),
             headers: {
               Host: `localhost:${caddyPort}`,
               Authorization: "Bearer integration-test",
@@ -780,6 +846,14 @@ test("optional real Caddy forwards Authorization and Origin to the loopback side
         request.setTimeout(500, () => request.destroy(new Error("timeout")));
         request.on("error", reject).end();
       });
+
+    await assert.rejects(
+      () =>
+        requestOnce("/healthz", true, "localhost", (_servername, certificate) =>
+          checkServerIdentity("wrong-hostname.invalid", certificate),
+        ),
+      (error) => error instanceof Error && "code" in error && error.code === "ERR_TLS_CERT_ALTNAME_INVALID",
+    );
 
     const paths = ["/mcp", "/healthz", "/readyz"];
     const responses = {};
@@ -938,6 +1012,7 @@ ${config}`,
     processHandle.stderr.on("data", (chunk) => {
       diagnostics += chunk.toString();
     });
+    const ca = await waitForCaddyLocalRoot(directory);
     const requestPath = (path) =>
       new Promise((resolve, reject) => {
         const request = httpsRequest(
@@ -946,7 +1021,7 @@ ${config}`,
             port: caddyPort,
             servername: "localhost",
             path,
-            rejectUnauthorized: false,
+            ca,
             headers: {
               Host: `localhost:${caddyPort}`,
               Authorization: "Bearer denied-test",
@@ -993,3 +1068,31 @@ ${config}`,
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+function caddyLocalRootPath(directory) {
+  return join(directory, "data", "caddy", "pki", "authorities", "local", "root.crt");
+}
+
+async function readCaddyLocalRoot(rootCertificate) {
+  const status = await lstat(rootCertificate);
+  if (!status.isFile() || status.isSymbolicLink() || status.size === 0 || status.size > MAX_CADDY_LOCAL_ROOT_BYTES)
+    throw new Error("Caddy local root certificate is unavailable");
+  const certificate = await readFile(rootCertificate);
+  if (certificate.length === 0 || certificate.length > MAX_CADDY_LOCAL_ROOT_BYTES)
+    throw new Error("Caddy local root certificate is unavailable");
+  return certificate;
+}
+
+async function waitForCaddyLocalRoot(directory) {
+  const rootCertificate = caddyLocalRootPath(directory);
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    try {
+      return await readCaddyLocalRoot(rootCertificate);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw new Error("Caddy local root certificate is unavailable");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error("Caddy local root certificate is unavailable");
+}
