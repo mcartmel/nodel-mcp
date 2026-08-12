@@ -1,0 +1,44 @@
+https://__HOSTNAME__ {
+	bind __BIND__
+	tls internal
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Content-Security-Policy "default-src 'none'"
+	}
+
+	@mcp path /mcp
+	@notAllowed {
+		not remote_ip __CIDRS__
+	}
+	handle @notAllowed {
+		respond 403
+	}
+
+	@health path /healthz
+	handle @health {
+		reverse_proxy __UPSTREAM__ {
+			flush_interval -1
+		}
+	}
+	@ready path /readyz
+	handle @ready {
+		reverse_proxy __UPSTREAM__ {
+			flush_interval -1
+		}
+	}
+
+	handle @mcp {
+		request_body {
+			max_size __BODY_LIMIT__
+		}
+		reverse_proxy __UPSTREAM__ {
+			flush_interval -1
+		}
+	}
+
+	respond 404
+}

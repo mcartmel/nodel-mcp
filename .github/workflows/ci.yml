@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install shell validation tools
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends --yes shellcheck
+      - name: Install dependencies
+        run: npm ci
+      - name: Fetch and verify Caddy v2.11.3 validator
+        run: node scripts/fetch-caddy-validation.mjs --output "$RUNNER_TEMP/caddy"
+        env:
+          CADDY_REQUIRED: "true"
+      - name: Format
+        run: npm run format:check
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Tests
+        run: npm test
+      - name: Coverage
+        run: npm run coverage
+      - name: Generated docs
+        run: npm run docs:check
+      - name: Dependency audit
+        run: npm run dependency:check
+      - name: License report
+        run: npm run license:check
+      - name: Secret scan
+        run: npm run secret:check
+      - name: Shell and systemd validation
+        run: npm run shell:check
+      - name: Caddy validation
+        run: npm run caddy:check
+      - name: Build release package
+        run: npm run release:package
+      - name: Verify release evidence determinism
+        run: npm run release:determinism
+      - name: Smoke exact release package
+        run: npm run release:smoke

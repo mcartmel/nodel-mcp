@@ -1,0 +1,32 @@
+[Unit]
+Description=Nodel AI MCP sidecar
+After=network.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__INSTALL_DIR__
+EnvironmentFile=-__ENV_FILE__
+Environment="NODEL_STATE_DIR=__STATE_DIR__"
+ExecStart=__NODE_BIN__ __INSTALL_DIR__/dist/index.js
+Restart=on-failure
+RestartSec=5
+# The application shutdown bound defaults to 10s; keep systemd slightly above it.
+TimeoutStopSec=15s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+ReadWritePaths=__STATE_DIR__
+UMask=0077
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

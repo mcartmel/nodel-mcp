@@ -1,0 +1,70 @@
+{
+  "name": "nodel-ai",
+  "version": "0.1.0",
+  "description": "MCP sidecar for a local Nodel runtime; read-only by default with approval-gated write tools",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcartmel/nodel-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mcartmel/nodel-mcp/issues"
+  },
+  "homepage": "https://github.com/mcartmel/nodel-mcp#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/index.js",
+  "license": "MPL-2.0",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "dev:watch": "tsx watch src/index.ts",
+    "build": "tsc",
+    "typecheck": "rm -rf dist && tsc && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.test-js.json --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run build && node --test test/*.test.mjs && tsx --test test/*.test.ts",
+    "coverage": "npm run build && node scripts/coverage-runner.mjs",
+    "docs:generate": "node scripts/generate-tool-reference.mjs",
+    "docs:check": "node scripts/generate-tool-reference.mjs --check && node scripts/check-docs-links.mjs",
+    "public:check": "node scripts/public-export.mjs --check",
+    "public:export": "node scripts/public-export.mjs",
+    "dependency:check": "npm audit --omit=dev --audit-level=high",
+    "license:report": "node scripts/license-report.mjs",
+    "license:check": "node scripts/license-report.mjs --check",
+    "shell:check": "node scripts/check-shell-systemd.mjs",
+    "systemd:check": "node scripts/check-shell-systemd.mjs",
+    "caddy:render": "node scripts/caddy-render.mjs",
+    "caddy:check": "node scripts/caddy-check.mjs",
+    "secret:check": "node scripts/secret-check.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "release-version-check": "node scripts/release-version-check.mjs",
+    "release:package": "node scripts/release-package.mjs",
+    "release:determinism": "node scripts/release-determinism.mjs",
+    "release:smoke": "node scripts/release-smoke.mjs",
+    "release:compatibility-check": "node scripts/release-compatibility-check.mjs",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "dotenv": "17.4.2",
+    "express": "5.2.1",
+    "safe-regex2": "^5.0.0",
+    "saxes": "^6.0.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/express": "5.0.6",
+    "@types/node": "25.7.0",
+    "c8": "10.1.3",
+    "eslint": "9.39.1",
+    "license-checker": "25.0.1",
+    "prettier": "3.6.2",
+    "tsx": "4.21.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.66.0"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.state/
+*.log
+.DS_Store
+.kilo/
+coverage/
+artifacts/
+!reports/
+!reports/dependency-licenses.json

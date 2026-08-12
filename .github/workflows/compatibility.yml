@@ -1,0 +1,80 @@
+name: Nodel Compatibility
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "13 4 * * 6"
+
+permissions:
+  contents: read
+
+jobs:
+  nodel-2-2-1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Java 21
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install and build sidecar
+        run: npm ci && npm run build
+      - name: Download and verify Nodel
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/nodel-compat"
+          curl --fail --location --output "$RUNNER_TEMP/nodel-compat/nodel.jar" \
+            https://github.com/museumsvictoria/nodel/releases/download/v2.2.1.542/nodelhost-release-2.2.1-rev542.jar
+          printf '%s  %s\n' '5cc89df736006e48dc7044691ae7a4ea44353b57ddf8ae7bcfcccc62963a13f1' "$RUNNER_TEMP/nodel-compat/nodel.jar" | sha256sum --check
+      - name: Start disposable Nodel and built sidecar
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/nodel-compat/nodel-data" "$RUNNER_TEMP/nodel-compat/sidecar-state"
+          (cd "$RUNNER_TEMP/nodel-compat/nodel-data" && exec java -jar "$RUNNER_TEMP/nodel-compat/nodel.jar") >"$RUNNER_TEMP/nodel-compat/nodel.log" 2>&1 &
+          printf '%s\n' "$!" > "$RUNNER_TEMP/nodel-compat/nodel.pid"
+          wait_for() { for _ in $(seq 1 60); do curl --silent --fail "$1" >/dev/null && return 0; sleep 1; done; return 1; }
+          wait_for http://127.0.0.1:8085/REST
+          NODEL_BASE_URL=http://127.0.0.1:8085 MCP_PORT=8765 MCP_BIND_ADDRESS=127.0.0.1 \
+            NODEL_STATE_DIR="$RUNNER_TEMP/nodel-compat/sidecar-state" NODEL_ENABLE_WRITES=true \
+            NODEL_ENABLE_NODE_LIFECYCLE=true NODEL_ENABLE_DELETES=true NODEL_REQUIRE_WRITE_APPROVAL=false \
+            node dist/index.js >"$RUNNER_TEMP/nodel-compat/sidecar.log" 2>&1 &
+          printf '%s\n' "$!" > "$RUNNER_TEMP/nodel-compat/sidecar.pid"
+          wait_for http://127.0.0.1:8765/healthz
+          wait_for http://127.0.0.1:8765/readyz
+      - name: Run compatibility MCP flow
+        env:
+          NODEL_COMPAT_BASE_URL: http://127.0.0.1:8765
+          NODEL_COMPAT_LOG: ${{ runner.temp }}/nodel-compat/compatibility.log
+        run: node scripts/nodel-compatibility-smoke.mjs
+      - name: Sanitize compatibility diagnostics
+        if: failure()
+        env:
+          NODEL_COMPAT_LOG_DIR: ${{ runner.temp }}/nodel-compat
+          NODEL_COMPAT_SANITIZED_DIR: ${{ runner.temp }}/nodel-compat-sanitized
+        run: node scripts/sanitize-compatibility-logs.mjs
+      - name: Upload sanitized diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nodel-compatibility-failure-logs
+          path: ${{ runner.temp }}/nodel-compat-sanitized/
+          if-no-files-found: ignore
+      - name: Stop disposable processes
+        if: always()
+        run: |
+          set +e
+          for pid_file in "$RUNNER_TEMP/nodel-compat/sidecar.pid" "$RUNNER_TEMP/nodel-compat/nodel.pid"; do
+            if test -s "$pid_file"; then kill "$(<"$pid_file")" 2>/dev/null || true; fi
+          done
+          sleep 2
+          for pid_file in "$RUNNER_TEMP/nodel-compat/sidecar.pid" "$RUNNER_TEMP/nodel-compat/nodel.pid"; do
+            if test -s "$pid_file"; then kill -KILL "$(<"$pid_file")" 2>/dev/null || true; fi
+          done

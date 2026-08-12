@@ -1,0 +1,101 @@
+export type RecipeImportPolicy = {
+  allowedImports: string[];
+  allowedJavaPrefixes: string[];
+  discouragedImports: string[];
+  blockedImports: string[];
+  blockedCalls: string[];
+  preferredAlternatives: Record<string, string>;
+  unknownImportSeverity: "warning" | "error" | "ignore";
+  discouragedImportSeverity: "warning" | "error" | "ignore";
+};
+
+export const DEFAULT_RECIPE_IMPORT_POLICY: RecipeImportPolicy = {
+  allowedImports: [
+    "json",
+    "math",
+    "re",
+    "random",
+    "datetime",
+    "base64",
+    "hashlib",
+    "hmac",
+    "uuid",
+    "struct",
+    "binascii",
+    "collections",
+    "itertools",
+    "functools",
+    "operator",
+    "decimal",
+    "copy",
+    "csv",
+    "StringIO",
+    "cStringIO",
+  ],
+  allowedJavaPrefixes: ["java.lang", "java.util", "java.text", "java.math", "java.security", "javax.crypto"],
+  discouragedImports: [
+    "time",
+    "os",
+    "sys",
+    "urllib",
+    "urllib2",
+    "httplib",
+    "ssl",
+    "socket",
+    "threading",
+    "Queue",
+    "subprocess",
+    "java.io",
+    "java.net",
+    "java.nio",
+    "java.util.Timer",
+    "java.util.concurrent",
+  ],
+  blockedImports: [
+    "asyncio",
+    "aiohttp",
+    "multiprocessing",
+    "concurrent",
+    "concurrent.futures",
+    "selectors",
+    "select",
+    "socketserver",
+    "SocketServer",
+    "SimpleHTTPServer",
+    "BaseHTTPServer",
+    "sched",
+    "signal",
+    "twisted",
+    "tornado",
+    "gevent",
+    "eventlet",
+    "http.server",
+    "pathlib",
+    "dataclasses",
+    "typing",
+  ],
+  blockedCalls: [
+    "time.sleep",
+    "threading.Thread",
+    "threading.Timer",
+    "subprocess.Popen",
+    "subprocess.call",
+    "subprocess.check_output",
+    "os.system",
+    "os.popen",
+    "java.lang.Thread",
+    "java.lang.Runtime.getRuntime",
+    "java.lang.ProcessBuilder",
+    "java.util.Timer",
+  ],
+  preferredAlternatives: {
+    socket: "Use Nodel TCP() or UDP() helpers.",
+    threading: "Use Nodel timers/callbacks or managed helper patterns.",
+    subprocess:
+      "Use Nodel quick_process() for short-lived commands, or Process() for managed long-running helper programs.",
+    "time.sleep": "Avoid blocking sleeps; use timers/callbacks or state-machine style logic.",
+    asyncio: "Do not use asyncio in Nodel/Jython recipes.",
+  },
+  unknownImportSeverity: "warning",
+  discouragedImportSeverity: "warning",
+};
