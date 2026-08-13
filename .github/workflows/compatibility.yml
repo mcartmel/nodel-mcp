@@ -35,20 +35,13 @@ jobs:
             https://github.com/museumsvictoria/nodel/releases/download/v2.2.1.542/nodelhost-release-2.2.1-rev542.jar
           printf '%s  %s\n' '5cc89df736006e48dc7044691ae7a4ea44353b57ddf8ae7bcfcccc62963a13f1' "$RUNNER_TEMP/nodel-compat/nodel.jar" | sha256sum --check
       - name: Start disposable Nodel and built sidecar
+        env:
+          NODEL_COMPAT_DIR: ${{ runner.temp }}/nodel-compat
+          NODEL_COMPAT_JAR: ${{ runner.temp }}/nodel-compat/nodel.jar
+          NODEL_COMPAT_NODEL_PORT: "8085"
+          NODEL_COMPAT_SIDECAR_PORT: "8765"
         run: |
-          set -eu
-          mkdir -p "$RUNNER_TEMP/nodel-compat/nodel-data" "$RUNNER_TEMP/nodel-compat/sidecar-state"
-          (cd "$RUNNER_TEMP/nodel-compat/nodel-data" && exec java -jar "$RUNNER_TEMP/nodel-compat/nodel.jar") >"$RUNNER_TEMP/nodel-compat/nodel.log" 2>&1 &
-          printf '%s\n' "$!" > "$RUNNER_TEMP/nodel-compat/nodel.pid"
-          wait_for() { for _ in $(seq 1 60); do curl --silent --fail "$1" >/dev/null && return 0; sleep 1; done; return 1; }
-          wait_for http://127.0.0.1:8085/REST
-          NODEL_BASE_URL=http://127.0.0.1:8085 MCP_PORT=8765 MCP_BIND_ADDRESS=127.0.0.1 \
-            NODEL_STATE_DIR="$RUNNER_TEMP/nodel-compat/sidecar-state" NODEL_ENABLE_WRITES=true \
-            NODEL_ENABLE_NODE_LIFECYCLE=true NODEL_ENABLE_DELETES=true NODEL_REQUIRE_WRITE_APPROVAL=false \
-            node dist/index.js >"$RUNNER_TEMP/nodel-compat/sidecar.log" 2>&1 &
-          printf '%s\n' "$!" > "$RUNNER_TEMP/nodel-compat/sidecar.pid"
-          wait_for http://127.0.0.1:8765/healthz
-          wait_for http://127.0.0.1:8765/readyz
+          bash scripts/nodel-compatibility-supervisor.sh start
       - name: Run compatibility MCP flow
         env:
           NODEL_COMPAT_BASE_URL: http://127.0.0.1:8765
@@ -69,12 +62,8 @@ jobs:
           if-no-files-found: ignore
       - name: Stop disposable processes
         if: always()
+        env:
+          NODEL_COMPAT_DIR: ${{ runner.temp }}/nodel-compat
+          NODEL_COMPAT_JAR: ${{ runner.temp }}/nodel-compat/nodel.jar
         run: |
-          set +e
-          for pid_file in "$RUNNER_TEMP/nodel-compat/sidecar.pid" "$RUNNER_TEMP/nodel-compat/nodel.pid"; do
-            if test -s "$pid_file"; then kill "$(<"$pid_file")" 2>/dev/null || true; fi
-          done
-          sleep 2
-          for pid_file in "$RUNNER_TEMP/nodel-compat/sidecar.pid" "$RUNNER_TEMP/nodel-compat/nodel.pid"; do
-            if test -s "$pid_file"; then kill -KILL "$(<"$pid_file")" 2>/dev/null || true; fi
-          done
+          bash scripts/nodel-compatibility-supervisor.sh cleanup

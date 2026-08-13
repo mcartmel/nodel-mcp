@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { request as httpsRequest } from "node:https";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { checkServerIdentity } from "node:tls";
@@ -828,6 +828,7 @@ test("optional real Caddy forwards Authorization and Origin to the loopback side
             path,
             method: "GET",
             ca,
+            ...(verifyIdentity ? { agent: new HttpsAgent({ maxCachedSessions: 0 }) } : {}),
             ...(verifyIdentity ? { checkServerIdentity: verifyIdentity } : {}),
             headers: {
               Host: `localhost:${caddyPort}`,
@@ -846,14 +847,6 @@ test("optional real Caddy forwards Authorization and Origin to the loopback side
         request.setTimeout(500, () => request.destroy(new Error("timeout")));
         request.on("error", reject).end();
       });
-
-    await assert.rejects(
-      () =>
-        requestOnce("/healthz", true, "localhost", (_servername, certificate) =>
-          checkServerIdentity("wrong-hostname.invalid", certificate),
-        ),
-      (error) => error instanceof Error && "code" in error && error.code === "ERR_TLS_CERT_ALTNAME_INVALID",
-    );
 
     const paths = ["/mcp", "/healthz", "/readyz"];
     const responses = {};
@@ -887,6 +880,14 @@ test("optional real Caddy forwards Authorization and Origin to the loopback side
     assert.ok(responses["/mcp"], `Caddy response body was empty: ${JSON.stringify(responses)}`);
     assert.ok(responses["/healthz"], `Caddy response body was empty: ${JSON.stringify(responses)}`);
     assert.ok(responses["/readyz"], `Caddy response body was empty: ${JSON.stringify(responses)}`);
+
+    await assert.rejects(
+      () =>
+        requestOnce("/healthz", true, "localhost", (_servername, certificate) =>
+          checkServerIdentity("wrong-hostname.invalid", certificate),
+        ),
+      (error) => error instanceof Error && "code" in error && error.code === "ERR_TLS_CERT_ALTNAME_INVALID",
+    );
 
     const noOriginResponses = {};
     for (const path of paths) {

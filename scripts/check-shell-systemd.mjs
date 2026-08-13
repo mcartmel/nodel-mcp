@@ -28,7 +28,11 @@ const checkShellcheck = () => {
   markFailure(shellcheck.status, shellcheck.signal);
   if (process.exitCode) return;
 
-  const result = run("shellcheck", ["scripts/install-systemd-user.sh", "scripts/install-systemd-system.sh"]);
+  const result = run("shellcheck", [
+    "scripts/install-systemd-user.sh",
+    "scripts/install-systemd-system.sh",
+    "scripts/nodel-compatibility-supervisor.sh",
+  ]);
   markFailure(result.status, result.signal);
 };
 
