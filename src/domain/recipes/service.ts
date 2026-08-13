@@ -581,8 +581,8 @@ export async function deleteNode(
     const plan = {
       operation: "delete_node",
       node: resolved,
-      restPath: "",
-      method: "DELETE",
+      restPath: "remove?confirm=true",
+      method: "GET",
       approvalRequest: approval.request,
       dryRun: Boolean(dryRun),
       reason,
@@ -594,7 +594,7 @@ export async function deleteNode(
     assertWriteApproved(config, approval.details, approvalId);
     logger.info("Deleting Nodel node", { node: resolved.name, reason });
     const audited = await auditedMutation(config, { operation: "delete_node", node: resolved.name, reason }, () =>
-      nodelClient.nodeRequest(resolved, "", { method: "DELETE", responseMode: "json" }),
+      nodelClient.nodeRequest(resolved, "remove?confirm=true", { method: "GET", responseMode: "empty" }),
     );
     const verification = await verifyDeletedNode(nodelClient, config, resolved.name);
     return {
