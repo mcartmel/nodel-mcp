@@ -29,10 +29,11 @@ Released archives and checksums are published on the [GitHub Releases](https://g
 - Nodel baseline: 2.2.1.542 is the validated baseline compatibility target; other
   versions are best effort until listed in the compatibility matrix.
 
-## Read-Only Quick Start (Intended Release Path)
+## Quick Start (Read-Only by Default)
 
 The v0.1 release path is a versioned GitHub Release archive. Extract it and run
-the precompiled application without a build:
+the precompiled application without a build. Before starting, choose the Nodel
+runtime to connect to and whether this sidecar should expose write tools.
 
 1. Extract `nodel-ai-v<version>.tar.gz` and enter its directory.
 2. Install production dependencies:
@@ -41,23 +42,78 @@ the precompiled application without a build:
    npm ci --omit=dev
    ```
 
-3. Copy the example environment and keep write tools disabled by default:
+3. Copy the example environment:
 
    ```sh
    cp .env.example .env
    ```
 
-4. Start the service:
+4. Set the primary Nodel runtime in `.env`.
+
+   If Nodel and this sidecar run on the same host, keep the default:
+
+   ```env
+   NODEL_BASE_URL=http://127.0.0.1:8085
+   ```
+
+   If Nodel runs on another trusted host, replace it with that host's reachable
+   REST base URL, for example:
+
+   ```env
+   NODEL_BASE_URL=http://nodel-host.example.internal:8085
+   ```
+
+   `127.0.0.1` always means the sidecar's own network namespace. When running
+   the sidecar in a container or on another machine, use an address it can
+   actually reach. Do not point `NODEL_BASE_URL` at an untrusted service or
+   expose Nodel's REST port directly to an untrusted network.
+
+5. Choose an access mode in `.env`.
+
+   No changes are required for read-only operation. To enable parameter,
+   binding, recipe/file, and action writes while retaining short-lived operator
+   approvals, set:
+
+   ```env
+   NODEL_ENABLE_WRITES=true
+   NODEL_REQUIRE_WRITE_APPROVAL=true
+   ```
+
+   Create and restart operations require one additional gate:
+
+   ```env
+   NODEL_ENABLE_NODE_LIFECYCLE=true
+   ```
+
+   Deletion is a separate, cumulative opt-in and requires all three gates:
+
+   ```env
+   NODEL_ENABLE_WRITES=true
+   NODEL_ENABLE_NODE_LIFECYCLE=true
+   NODEL_ENABLE_DELETES=true
+   NODEL_REQUIRE_WRITE_APPROVAL=true
+   ```
+
+   Keep `NODEL_REQUIRE_WRITE_APPROVAL=true` for normal operation. Approval IDs
+   are workflow controls, not authentication; keep the MCP listener loopback-only
+   or configure the token and reverse-proxy protections described below.
+
+6. Start the service:
 
    ```sh
    node dist/index.js
    ```
 
-5. Confirm liveness:
+7. Confirm sidecar liveness and connectivity to the configured Nodel runtime:
 
    ```sh
    curl -s http://127.0.0.1:8765/healthz
+   curl -s http://127.0.0.1:8765/readyz
    ```
+
+   `/healthz` confirms that the sidecar is running. `/readyz` confirms that it
+   can reach `NODEL_BASE_URL`. Add the configured bearer token when
+   `NODEL_MCP_TOKEN` is set.
 
 For non-loopback access, use the tested Caddy renderer documented in
 [`docs/operations.md`](docs/operations.md). Caddy is never bundled or
@@ -67,8 +123,8 @@ auto-installed; keep the out-of-band token in a `0600` `.env`.
 unauthenticated `8085`. The host is not secure until those listeners are
 firewalled or rebound; the renderer only warns.
 
-The service is read-only by default. No write, lifecycle, or delete operations are
-enabled until you explicitly enable them in `.env`.
+The service is read-only by default. Write, lifecycle, and delete capabilities
+are enabled independently and cumulatively through the gates above.
 
 Release downloads also include `SHA256SUMS`, `SBOM.cdx.json`,
 `dependency-licenses.json`, and `ARTIFACT-MANIFEST.json`. These files are both
@@ -79,7 +135,7 @@ all of them except `SHA256SUMS` itself.
 
 | Variable                        | Default                 | Purpose                                                                                                            |
 | ------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `NODEL_BASE_URL`                | `http://127.0.0.1:8085` | Local Nodel REST base URL                                                                                          |
+| `NODEL_BASE_URL`                | `http://127.0.0.1:8085` | Primary trusted Nodel REST base URL; defaults to Nodel in the sidecar's host/network namespace                     |
 | `MCP_BIND_ADDRESS`              | `127.0.0.1`             | Listener bind address                                                                                              |
 | `MCP_PORT`                      | `8765`                  | Listener port                                                                                                      |
 | `NODEL_MCP_TOKEN`               | unset                   | Inbound bearer token for `/mcp` and `/readyz`                                                                      |
@@ -99,7 +155,7 @@ Set additional request/retention limits as needed:
 - `NODEL_BACKUP_RETENTION_DAYS` (default: 30)
 - `NODEL_BACKUP_RETENTION_PER_NODE_KIND` (default: 50)
 
-## Minimal Installation Modes
+## Access Modes Reference
 
 ### Read-only
 
@@ -110,11 +166,21 @@ NODEL_ENABLE_DELETES=false
 NODEL_REQUIRE_WRITE_APPROVAL=true
 ```
 
-### Maintenance write mode
+### Writes and actions
+
+```sh
+NODEL_ENABLE_WRITES=true
+NODEL_ENABLE_NODE_LIFECYCLE=false
+NODEL_ENABLE_DELETES=false
+NODEL_REQUIRE_WRITE_APPROVAL=true
+```
+
+### Writes plus create/restart
 
 ```sh
 NODEL_ENABLE_WRITES=true
 NODEL_ENABLE_NODE_LIFECYCLE=true
+NODEL_ENABLE_DELETES=false
 NODEL_REQUIRE_WRITE_APPROVAL=true
 ```
 
