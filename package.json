@@ -48,7 +48,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "dotenv": "17.4.2",
     "express": "5.2.1",
     "safe-regex2": "^5.0.0",
