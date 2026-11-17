@@ -268,6 +268,93 @@ reference to avoid drift:
 The list is generated from canonical tool definitions and includes capability,
 stability, and gate information.
 
+### Advisory v1/v2 UI authoring
+
+No-argument UI guidance/reference calls remain local v1 XML reads. Use
+`format=v2` for HTML custom-element guidance (offline bundled reference without a
+node), or `format=auto,node=...,path=...` to inspect an existing page without
+migrating it. Auto selection preserves a completely recognized saved format,
+independently of host support. Mixed/incomplete recognition and uncertain support
+return options instead of guessing. A new HTML path returning HTTP 404 is
+conditional absence evidence, not permission to create or replace a page. XML
+paths remain v1 paths even when missing; non-UI paths never become HTML starters.
+Explicit v2 guidance/reference calls do not read a saved page for recognition.
+
+Each node-aware guidance/reference operation pins one trusted target and one
+capability observation. Resolve, bounded file reads and capability probes share a
+10-second absolute deadline, respecting lower configured request timeouts and
+cancelling pending HTTP reads. `refresh=true` re-resolves and refreshes that one
+observation. Available contract/entry assets do not prove full runtime deployment
+or browser operation. Unsupported/malformed/inaccessible contracts use a pinned
+bundled reference with `contractSource=bundled`, `deploymentApplicable=false` and
+unverified compatibility; starter provenance is separate from a live contract.
+The offline pin is `nodel-webui-v2` revision
+`b4f9f03dd40ac4670d48efa749ae8d5ad96c2980` (contract SHA-256
+`47ca302aea65ed7a47002b6c312f978471aa681f923c10878bc7b2782210d2a8`);
+attribution, MPL-2.0 terms and starter hash are in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+V2 component references return a recommended custom-component **index only** by
+default. Pass up to 20 unique component names for focused details and one shared
+common-attribute page. `includeCore=true` exposes advanced core entries; hidden,
+non-catalogue and internal hosts are not ordinary recommendations (exact names
+remain available with internal-host warnings). Responses project supported
+fields recursively, ignore unknown additive metadata and cap serialized MCP text
+at 64 KiB, including styles and metadata. Truncation is explicit. Use
+`indexOffset/indexLimit`, `stylesOffset/stylesLimit`,
+`attributesOffset/attributesLimit`, `commonOffset/commonLimit` and
+`detailsOffset/detailsLimit` to page; `limit`/`returned` reflect actual returned
+items, `requestedLimit` records the request and `nextOffset` advances by returned
+items. Oversized component overviews retain the component identity and return
+`field_selection_required` instead of an empty, non-advancing detail page.
+
+Use the v2-only `field` selector for supported field details and complete tails:
+`attributes`, `commonAttributes`, `attribute.values`, `commonAttribute.values`,
+`actionBinding.phases`, `signalBinding.targets`, `signalTarget.aggregations`,
+`event.detailFields`, composition children and aggregate signal targets. The
+response lists all selectors, including component/style scalar fields. Select
+one exact component; use `attributeName`, `bindingAttribute`, `targetName` or
+`eventName` where applicable, then advance `fieldOffset/fieldLimit`. Every
+supported string in field mode returns exact `text` segments with its own
+`offset`, `returned`, `total`, `hasMore` and `nextOffset`; use
+`textOffset/textLimit` (UTF-16 code units) to retrieve long descriptions, names,
+syntax or source snippets without inserted ellipses. `field=components` can
+recover full component names. Exact snippets are data, never executed. Each call
+still obeys the aggregate 64 KiB budget; budget-limited pages advance or explicitly
+direct the caller to a field selector. Unknown additive data is never returned.
+
+Inspect the existing page → obtain matching guidance/reference → inspect node
+actions/signals/schemas → propose or exact-edit → normal approval/save → verify
+read-back hashes separately from advisory UI checks and isolated browser results.
+Verifier calls with omitted format/path retain the legacy `content/index.xml`
+default, including XML parse errors for malformed candidates, unless supplied
+content positively identifies v2. Explicit `format=auto` is conservative for
+unknown supplied content; an explicitly supplied canonical XML path still runs
+XML validation. Explicit v2 and positively recognized v2 content use
+`content/index.html`. Adding/replacing
+a primary page can change navigation/default selection; do not delete XML or
+change runtime defaults as part of authoring. UI advice never authorizes writes,
+installs a runtime or establishes browser correctness.
+
+The six existing supporting-file text/base64 proposal/save and exact-edit
+proposal/apply tools accept `uiFeedback=auto|skip|v1|v2` (default `auto`). Recognized
+UI candidates receive static advice for the **exact normalized candidate bytes**,
+including `includeContent=false`, dry-run and no-change results. Original page
+evidence retains recognition when edits remove the final v2 marker. Plain
+unmarked HTML/XML and unrelated support files receive no extra UI envelope or
+advisory requests. `skip` explicitly reports `not_run` for UI candidates without
+advisory network reads; explicit v1/v2 selects analysis only, never conversion.
+
+Automatic enrichment has a cancellable 3-second aggregate deadline and a default
+200-issue output limit. Invalid UTF-8 or candidates over 2 MiB receive exact-hash
+`not_run` advice without changing their bytes. Saves attach advice **after** the
+normal mutation/read-back sequence and lock release; advisory errors, policy
+failures or unavailable evidence cannot undo a successful save. Mutation status,
+audit operation ID and byte verification remain separate. Selections, live
+evidence and advisory provenance never enter approval hashes; normal write,
+approval, expected-hash and path gates remain enforced. `verify_write_plan`
+summarizes supplied advice separately as unverified, not as authorization.
+
 ## MCP Client Configuration
 
 Point MCP clients at `http://127.0.0.1:8765/mcp` for local testing.

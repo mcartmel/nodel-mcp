@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/mcartmel/nodel-webui-v2",
+  "revision": "b4f9f03dd40ac4670d48efa749ae8d5ad96c2980",
+  "packageVersion": "0.2.0",
+  "schemaVersion": 1,
+  "license": "MPL-2.0",
+  "sha256": "47ca302aea65ed7a47002b6c312f978471aa681f923c10878bc7b2782210d2a8",
+  "contentHash": "47ca302aea65ed7a47002b6c312f978471aa681f923c10878bc7b2782210d2a8",
+  "starterSha256": "b401e1a972dad38d853343bdaea61f708eff624cb11a435220f6b8a12dd6f8ae",
+  "sourceArtifact": "v2/nodel-components.json",
+  "attribution": "nodel-webui-v2; Mozilla Public License 2.0"
+}

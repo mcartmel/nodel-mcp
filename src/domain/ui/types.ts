@@ -8,6 +8,10 @@ export type UiValidationIssue = {
   line?: number;
   column?: number;
   parserSpecific?: boolean;
+  explanation?: string;
+  suggestion?: string;
+  provenance?: { rule?: string; source?: string; version?: string };
+  location?: { line?: number; column?: number; startOffset?: number; endOffset?: number };
 };
 export type UiPointReference = {
   kind: "action" | "event";
@@ -35,9 +39,15 @@ export type UiValidationInput = {
   source: "saved" | "provided";
   actions: unknown;
   signals: unknown;
+  /** Failed or omitted probes are unknown, not an empty point catalogue. */
+  actionsAvailable?: boolean;
+  signalsAvailable?: boolean;
   filePaths: string[];
+  filePathsAvailable?: boolean;
   recipeFiles?: Array<{ path: string; content: string }>;
   schemasJson?: string;
+  /** False means schema-dependent Frontend checks must not assume an empty schema file. */
+  schemasAvailable?: boolean;
   liveEntries?: unknown[];
   dynamicOptionWarningThreshold?: number;
   maxIssues?: number;

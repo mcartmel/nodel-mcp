@@ -40,6 +40,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
   "nodel.verify_recipe_script": policy("read"),
   "nodel.get_ui_guidelines": policy("read"),
   "nodel.get_ui_component_reference": policy("read"),
+  "nodel.get_ui_capabilities": policy("read"),
   "nodel.verify_ui_file": policy("read"),
   "nodel.read_signal": policy("read"),
   "nodel.get_node_parameters": policy("read"),

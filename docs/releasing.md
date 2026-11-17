@@ -15,8 +15,11 @@ produced.
    personal/internal data, host-specific paths, and unreviewed copied content.
    Rotate credentials before any history rewrite.
 4. Verify `LICENSE`, `THIRD_PARTY_NOTICES.md`, upstream Nodel revision
-   `19756071383d696682688ab436c77c0a1f80c783`, and nodel-recipes MIT
-   provenance. Record the license/provenance review in the release notes.
+   `19756071383d696682688ab436c77c0a1f80c783`, nodel-recipes MIT provenance,
+   and the pinned v2 contract/starter MPL-2.0 provenance and SHA-256 values in
+   `src/nodel/v2/provenance.json`. Record the license/provenance review in the
+   release notes. The runtime `parse5` dependency is MIT-licensed and appears in
+   the lockfile-specific dependency report.
 5. Generate `reports/dependency-licenses.json` from the exact lockfile with
    `npm run license:report`; review the report and release archive for
    compatible redistribution terms. For dependency maintenance, update direct
@@ -62,6 +65,53 @@ The source export and binary release package are intentionally separate inputs:
 the export validates the complete reviewed source tree, while release packaging
 builds an allowlisted compiled artifact. Both run the same public-candidate path,
 content, mode, symlink, private-link, host-path, and secret policy before output.
+
+The build copies the pinned v2 contract, starter and provenance into
+`dist/nodel/v2/`; the release allowlist packages that compiled directory and
+`THIRD_PARTY_NOTICES.md`. Builds verify the contract/starter hashes and need no
+`nodel-webui-v2` sibling checkout or network access. To refresh the pin, first
+review an immutable upstream revision and local contract/catalogue files, then
+run the explicit maintainer script (the script writes only `src/nodel/v2/`).
+The recommended `--catalogue` mode requires `npm run build` first and reuses the
+compiled bounded HTML parser for local `components.html`: at most 4 MiB, 100,000
+allocated nodes, depth 512, 128 attributes per tag, 65,536 characters per markup token,
+200 parser error events and 2,000,000 tree-work units. It rejects incomplete,
+truncated or erroneous HTML before extraction or any pin writes. It
+requires exactly one marked Quickstart page/code block, decodes HTML text once,
+preserves its contents and writes the pinned single trailing newline. A direct
+`--starter` file remains available for an already extracted, strictly UTF-8
+starter; this mode does not require compiled helpers. `--revision` must be a full
+40-hex-character commit SHA; branch names such as `main` are rejected before any
+file I/O. The refresh script is a source-checkout maintainer tool, not a command
+included in release archives.
+
+```sh
+npm run build # required before --catalogue (also run by npm test)
+node scripts/refresh-v2-reference.mjs --refresh \
+  --artifact /path/to/reviewed/v2/nodel-components.json \
+  --catalogue /path/to/reviewed/components.html \
+  --repository https://github.com/mcartmel/nodel-webui-v2 \
+  --revision <40-character-commit-sha> \
+  --package-version <upstream-version> --schema-version 1 --license MPL-2.0
+node scripts/refresh-v2-reference.mjs --check \
+  --artifact /path/to/reviewed/v2/nodel-components.json \
+  --catalogue /path/to/reviewed/components.html \
+  --repository https://github.com/mcartmel/nodel-webui-v2 \
+  --revision <40-character-commit-sha> \
+  --package-version <upstream-version> --schema-version 1 --license MPL-2.0
+npm run build
+```
+
+The refresh/check command requires explicit provenance and compares exact
+contract bytes and the precisely extracted starter; it does not download
+upstream content or vendor the catalogue. Review updates to
+`THIRD_PARTY_NOTICES.md` and the dependency license report along with the pin.
+
+The isolated browser qualification verifies that the runtime-served component
+contract hash matches the pinned reference. It records the runtime distribution
+used, but does not independently verify the source commit/build revision of
+those runtime assets; do not treat the contract hash as complete build
+provenance.
 
 ## Installing a release archive
 
@@ -144,3 +194,16 @@ The narrow `test-exclude` overrides therefore select patched `glob` 14.0.6 and
 `minimatch` 11.0.9. The regression suite exercises the real include/exclude
 glob behavior, and the normal c8 run still checks remapped TypeScript source
 and existing statement/branch thresholds.
+
+The clean full audit reported on 2026-11-17 was time-bound. A subsequent refresh
+identified GHSA-fc5q-39xc-vjpf, a high-severity `picomatch` advisory affecting
+versions through 4.0.7, in the development-only dependency tree; current npm
+metadata yields nine high findings through that chain and zero production
+findings. The registry's latest `picomatch` is 4.0.7, with no patched release,
+and latest `tinyglobby` 0.2.17 still uses `^4.0.4`. The latest
+`typescript-eslint` 8.73 supports ESLint 10 and TypeScript below 6.1, so the
+compatible tooling pins do not offer a safe route around this advisory. Do not
+force a downgrade, add a misleading override, waive the advisory, or weaken the
+production dependency gate. Recheck the full audit before release; until a
+patched compatible dependency is available, the unresolved development advisory
+means the full audit has not passed even though the production audit is clean.

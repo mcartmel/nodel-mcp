@@ -20,6 +20,7 @@ export function collectAssets(
   files: Set<string>,
   assets: UiAssetReference[],
   issues: UiValidationIssue[],
+  filesAvailable = true,
 ) {
   const candidates: Array<[string, string | undefined]> =
     element.name === "pages"
@@ -36,7 +37,7 @@ export function collectAssets(
     const external = isExternalUiAsset(value);
     const builtIn = /^\/?v1\//iu.test(value);
     const normalizedPath = external || builtIn ? undefined : normalizeUiAssetPath(value);
-    const exists = normalizedPath ? files.has(normalizedPath) : undefined;
+    const exists = normalizedPath && filesAvailable ? files.has(normalizedPath) : undefined;
     assets.push({
       element: element.name,
       attribute,
@@ -48,7 +49,7 @@ export function collectAssets(
       line: element.line,
       column: element.column,
     });
-    if (normalizedPath && !exists)
+    if (normalizedPath && filesAvailable && !exists)
       addIssue(
         issues,
         element,

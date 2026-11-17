@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { renderUnit } from "../scripts/systemd-render.mjs";
 import { cyclonedxComponents, packageNameFromLockPath } from "../scripts/sbom.mjs";
 import { validateProductionLicenses } from "../scripts/license-policy.mjs";
@@ -141,6 +143,102 @@ test("split catalog files carry MPL provenance notices", async () => {
     );
 });
 
+test("pinned v2 fallback is provenance-checked, built, packaged, and attributed", async () => {
+  const [contract, starter, provenanceText, notices, packageSource, licenseReport] = await Promise.all([
+    readFile(new URL("../src/nodel/v2/contract.json", import.meta.url)),
+    readFile(new URL("../src/nodel/v2/quickstart.json", import.meta.url)),
+    readFile(new URL("../src/nodel/v2/provenance.json", import.meta.url), "utf8"),
+    readFile(new URL("../THIRD_PARTY_NOTICES.md", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/release-package.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../reports/dependency-licenses.json", import.meta.url), "utf8"),
+  ]);
+  const provenance = JSON.parse(provenanceText);
+  const contractHash = createHash("sha256").update(contract).digest("hex");
+  const starterData = JSON.parse(starter.toString("utf8"));
+  const starterHash = createHash("sha256").update(starterData).digest("hex");
+  assert.equal(provenance.sha256, contractHash);
+  assert.equal(provenance.contentHash, contractHash);
+  assert.equal(provenance.starterSha256, starterHash);
+  assert.match(notices, new RegExp(provenance.revision, "u"));
+  assert.match(notices, new RegExp(contractHash, "u"));
+  assert.match(notices, new RegExp(starterHash, "u"));
+  assert.match(notices, /nodel-webui-v2[\s\S]*MPL-2\.0/u);
+  assert.match(packageSource, /"dist"/u);
+  assert.match(
+    await readFile(new URL("../scripts/release-smoke.mjs", import.meta.url), "utf8"),
+    /Packaged offline v2 guidance/u,
+  );
+  const licenses = JSON.parse(licenseReport);
+  assert.equal(licenses.dependencies["parse5@7.3.0"].licenses, "MIT");
+
+  for (const name of ["contract.json", "quickstart.json", "provenance.json"]) {
+    assert.deepEqual(
+      await readFile(new URL(`../src/nodel/v2/${name}`, import.meta.url)),
+      await readFile(new URL(`../dist/nodel/v2/${name}`, import.meta.url)),
+    );
+  }
+});
+
+test("v2 reference refresh extracts the marked Quickstart from catalogue HTML", async () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const starter = JSON.parse(await readFile(new URL("../src/nodel/v2/quickstart.json", import.meta.url), "utf8"));
+  const contract = new URL("../src/nodel/v2/contract.json", import.meta.url);
+  const provenance = new URL("../src/nodel/v2/provenance.json", import.meta.url);
+  const starterPath = new URL("../src/nodel/v2/quickstart.json", import.meta.url);
+  const original = await Promise.all([readFile(contract), readFile(provenance), readFile(starterPath)]);
+  const temp = await mkdtemp(join(tmpdir(), "nodel-v2-catalogue-test-"));
+  const cataloguePath = join(temp, "components.html");
+  try {
+    const escaped = starter.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    await writeFile(
+      cataloguePath,
+      `<!doctype html><html><nodel-app><nodel-page data-catalogue-quickstart><pre data-catalogue-quickstart-code><code>${escaped}</code></pre></nodel-page></nodel-app></html>`,
+    );
+    const args = [
+      "scripts/refresh-v2-reference.mjs",
+      "--check",
+      "--artifact",
+      fileURLToPath(contract),
+      "--catalogue",
+      cataloguePath,
+      "--repository",
+      "https://github.com/mcartmel/nodel-webui-v2",
+      "--revision",
+      "b4f9f03dd40ac4670d48efa749ae8d5ad96c2980",
+      "--package-version",
+      "0.2.0",
+      "--schema-version",
+      "1",
+      "--license",
+      "MPL-2.0",
+    ];
+    const check = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8" });
+    assert.equal(check.status, 0, check.stderr);
+    assert.match(check.stdout, /v2 contract reference verified/u);
+
+    for (const mode of ["--check", "--refresh"]) {
+      const invalidRevision = [...args];
+      invalidRevision[1] = mode;
+      invalidRevision[invalidRevision.indexOf("b4f9f03dd40ac4670d48efa749ae8d5ad96c2980")] = "main";
+      const result = spawnSync(process.execPath, invalidRevision, { cwd: root, encoding: "utf8" });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /immutable 40-character Git commit SHA/u);
+      const after = await Promise.all([readFile(contract), readFile(provenance), readFile(starterPath)]);
+      for (let index = 0; index < original.length; index += 1) assert.deepEqual(after[index], original[index]);
+    }
+
+    await writeFile(
+      cataloguePath,
+      `<!doctype html><html><nodel-page data-catalogue-quickstart><pre data-catalogue-quickstart-code><code>${escaped}</code></pre></nodel-page><nodel-page data-catalogue-quickstart></nodel-page></html>`,
+    );
+    const ambiguous = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8" });
+    assert.notEqual(ambiguous.status, 0);
+    assert.match(ambiguous.stderr, /exactly one marked Quickstart/u);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("systemd installers invoke the selected Node binary", async () => {
   const [user, system] = await Promise.all([
     readFile(fileURLToPath(new URL("../scripts/install-systemd-user.sh", import.meta.url)), "utf8"),
@@ -215,12 +313,14 @@ test(
   "release package can be rebuilt with the same hash",
   { skip: !process.env.RUN_RELEASE_PACKAGE_TESTS, timeout: 120_000 },
   async () => {
+    const artifactDir = process.env.RELEASE_ARTIFACT_DIR ?? fileURLToPath(new URL("../artifacts", import.meta.url));
     const first = spawnSync("npm", ["run", "release:package"], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),
+      env: { ...process.env, RELEASE_ARTIFACT_DIR: artifactDir },
       encoding: "utf8",
     });
     assert.equal(first.status, 0, first.stderr);
-    const archive = fileURLToPath(new URL("../artifacts/nodel-ai-v0.1.0.tar.gz", import.meta.url));
+    const archive = pathToFileURL(`${artifactDir}/nodel-ai-v0.1.0.tar.gz`);
     const hash = async () =>
       createHash("sha256")
         .update(await readFile(archive))
@@ -228,6 +328,7 @@ test(
     const firstHash = await hash();
     const second = spawnSync("npm", ["run", "release:package"], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),
+      env: { ...process.env, RELEASE_ARTIFACT_DIR: artifactDir },
       encoding: "utf8",
     });
     assert.equal(second.status, 0, second.stderr);

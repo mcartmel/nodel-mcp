@@ -5,7 +5,12 @@ import { addIssue, numberAttribute } from "./utils.js";
 
 const universallyAllowedAttributes = new Set(["xmlns", "xmlns:xsi", "xsi:noNamespaceSchemaLocation"]);
 
-export function validateElementCatalog(element: UiElement, parent: UiElement | undefined, issues: UiValidationIssue[]) {
+export function validateElementCatalog(
+  element: UiElement,
+  parent: UiElement | undefined,
+  issues: UiValidationIssue[],
+  treeComplete = true,
+) {
   const component = getV1UiComponent(element.name);
   if (!component) {
     addIssue(
@@ -89,7 +94,7 @@ export function validateElementCatalog(element: UiElement, parent: UiElement | u
   const requiredChildren =
     element.name === "row" && parent?.name === "grid" ? ["cell"] : (component.allowedChildren.required ?? []);
   for (const requiredChild of requiredChildren)
-    if (!requiredChildPresent(element.children, requiredChild))
+    if (treeComplete && !requiredChildPresent(element.children, requiredChild))
       addIssue(
         issues,
         element,

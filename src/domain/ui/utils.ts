@@ -31,8 +31,13 @@ export function walkElements(
   visit: (element: UiElement, parent?: UiElement) => void,
   parent?: UiElement,
 ) {
-  visit(element, parent);
-  for (const child of element.children) walkElements(child, visit, element);
+  const stack = [{ element, parent }];
+  while (stack.length) {
+    const current = stack.pop()!;
+    visit(current.element, current.parent);
+    for (let index = current.element.children.length - 1; index >= 0; index--)
+      stack.push({ element: current.element.children[index]!, parent: current.element });
+  }
 }
 
 export function numberAttribute(value: string | undefined) {

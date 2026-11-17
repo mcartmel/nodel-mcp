@@ -1,4 +1,5 @@
 import { SaxesParser, type SaxesTag } from "saxes";
+import { UI_ADVISORY_LIMITS } from "./limits.js";
 export type ParsedUiDocument = {
   content: string;
   processingInstructions: string[];
@@ -21,6 +22,8 @@ export type UiElement = {
   column: number;
 };
 export type ParsedUi = {
+  complete: boolean;
+  truncationReason?: string;
   root?: UiElement;
   processingInstructions: Array<{
     target: string;
@@ -46,16 +49,40 @@ export function parseV1Ui(content: string): ParsedUi {
   const stack: UiElement[] = [];
   let root: UiElement | undefined;
   let parseError: Error | undefined;
+  let truncationReason: string | undefined;
+  let nodes = 0;
+  let attributes = 0;
+  let instructions = 0;
+  let errorEvents = 0;
+  const stop = (reason: string): never => {
+    truncationReason = reason;
+    throw new Error("XML resource budget exhausted");
+  };
   const parser = new SaxesParser({ xmlns: false });
+  parser.on("opentagstart", () => {
+    if (++nodes > UI_ADVISORY_LIMITS.maxVisitedNodes) stop("node_count");
+    if (stack.length >= UI_ADVISORY_LIMITS.maxDepth) stop("depth");
+    attributes = 0;
+  });
+  parser.on("attribute", () => {
+    if (++attributes > UI_ADVISORY_LIMITS.maxAttributesPerTag) stop("attributes_per_tag");
+  });
   parser.on("processinginstruction", (instruction) =>
-    processingInstructions.push({
-      target: instruction.target,
-      body: instruction.body,
-      line: parser.line,
-      column: parser.column,
-    }),
+    ++instructions > UI_ADVISORY_LIMITS.maxVisitedNodes
+      ? stop("processing_instructions")
+      : processingInstructions.push({
+          target: instruction.target,
+          body: instruction.body,
+          line: parser.line,
+          column: parser.column,
+        }),
   );
   parser.on("opentag", (tag: SaxesTag) => {
+    let tagSize = tag.name.length;
+    for (const [name, value] of Object.entries(tag.attributes)) {
+      tagSize += name.length + String(value).length;
+      if (tagSize > UI_ADVISORY_LIMITS.maxTagCharacters) stop("tag_size");
+    }
     const element: UiElement = {
       name: tag.name,
       attributes: Object.fromEntries(
@@ -78,11 +105,13 @@ export function parseV1Ui(content: string): ParsedUi {
   });
   parser.on("error", (error) => {
     parseError = error;
+    if (++errorEvents > UI_ADVISORY_LIMITS.maxParserErrorEvents) stop("parser_errors");
   });
   try {
+    if (Buffer.byteLength(content, "utf8") > UI_ADVISORY_LIMITS.maxInputBytes) stop("input_bytes");
     parser.write(content).close();
   } catch (error) {
-    parseError = error as Error;
+    if (!truncationReason) parseError = error as Error;
   }
   if (parseError)
     errors.push({
@@ -92,5 +121,11 @@ export function parseV1Ui(content: string): ParsedUi {
       line: parser.line,
       column: parser.column,
     });
-  return { root, processingInstructions, errors };
+  if (truncationReason)
+    errors.push({
+      severity: "warning",
+      code: "UI_XML_ANALYSIS_TRUNCATED",
+      message: `XML analysis stopped at the ${truncationReason} resource limit.`,
+    });
+  return { root, processingInstructions, errors, complete: !truncationReason, truncationReason };
 }

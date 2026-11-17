@@ -279,6 +279,7 @@ test("explicit create verification probes the runtime that accepted creation", a
     const remoteRuntime = "http://remote.example:8085";
     const client = {
       assertRuntimeUrlAllowed: (url) => assert.equal(url, remoteRuntime),
+      createRuntimeNodeReference: (runtime, name) => ({ ...node, name, nodeBaseUrl: `${runtime}/nodes/${name}/` }),
       runtimeRequest: async (_path, _options, url) => {
         assert.equal(url, remoteRuntime);
         return { accepted: true };
@@ -299,6 +300,7 @@ test("explicit create verification probes the runtime that accepted creation", a
     const localClient = {
       runtimeRequest: async () => ({ accepted: true }),
       assertRuntimeUrlAllowed: () => undefined,
+      createRuntimeNodeReference: (runtime, name) => ({ ...node, name, nodeBaseUrl: `${runtime}/nodes/${name}/` }),
       nodeRequest: async () => {
         throw new Error("node is still starting");
       },

@@ -303,12 +303,40 @@ export function verifyWritePlan(
     errors,
     warnings,
     approval,
+    ...((task === "node_file" || task === "node_file_edit") && isRecord(plan.uiFeedback)
+      ? { advisory: summarizeUiAdvice(plan) }
+      : {}),
     nextStep:
       errors.length > 0
         ? "Fix validation errors before requesting approval or applying."
         : config.writeApprovalRequired && config.writesEnabled
           ? "Get operator approval with nodel.request_write_approval or fallback nodel.approve_write before applying."
           : "Apply with the matching tool, then verify read-back state.",
+  };
+}
+
+function summarizeUiAdvice(plan: Record<string, unknown>) {
+  const feedback = plan.uiFeedback as Record<string, unknown>;
+  const validation = isRecord(feedback.validation) ? feedback.validation : {};
+  const hash = readString(feedback.sha256);
+  const nextHash = readString(plan.nextHash);
+  const statuses = ["passed", "warnings", "errors", "incomplete", "not_run"];
+  const count = (value: unknown) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  return {
+    advisory: true,
+    source: "caller_supplied_unverified",
+    status:
+      typeof validation.status === "string" && statuses.includes(validation.status) ? validation.status : "unknown",
+    complete: validation.complete === true,
+    errors: count(validation.errors),
+    warnings: count(validation.warnings),
+    info: count(validation.info),
+    candidateHashMatchesPlan: hash && nextHash ? hash === nextHash : undefined,
+    message:
+      hash && nextHash && hash !== nextHash
+        ? "UI feedback describes different candidate bytes and may be stale. This summary is not authorization; apply performs fresh bounded advisory analysis."
+        : "Caller-supplied UI findings are advice only, not authorization or browser verification. Apply performs fresh bounded advisory analysis; byte read-back remains separate.",
   };
 }
 
@@ -350,15 +378,18 @@ function baseWorkflow(task: GuidanceTask) {
       readSteps: [
         "Use supporting-file tools for HTML/JS/CSS/images/assets; never use them for script.py.",
         "Place custom UI/static assets under content/ because Nodel treats that folder specially; browser URLs should omit the content/ prefix.",
-        "For v1 XML dashboard files, call nodel.get_ui_guidelines, use nodel.get_ui_component_reference for exact DOM/CSS behavior, read the current XML, and inspect current actions/signals before proposing changes.",
-        "Validate proposed v1 XML with nodel.verify_ui_file(content=...) before approval/apply.",
+        "Inspect an existing UI first and preserve its detected format. Use nodel.get_ui_guidelines(format=auto,node=...,path=...) or explicitly select v1/v2; auto does not guess when evidence is unavailable.",
+        "For v2 HTML, call nodel.get_ui_capabilities for target evidence and use the filtered nodel.get_ui_component_reference(format=v2,node=...) before authoring; bundled offline guidance is explicitly unverified against deployment.",
+        "For v1 XML, call nodel.get_ui_guidelines and use nodel.get_ui_component_reference for exact DOM/CSS behavior. Inspect current actions/signals before proposing either format.",
+        "Validate proposed XML or HTML with nodel.verify_ui_file(format=auto|v1|v2,content=...) before approval/apply. UI findings are advisory only, do not authorize/block writes, and do not prove browser rendering.",
         "Use text tools for text assets and base64 tools for binary assets.",
+        "Supporting-file proposal/save tools automatically return uiFeedback for recognized UI candidates, including dry-run/no-change. uiFeedback=skip avoids advisory reads; v1/v2 force advisory format only. Advice and live evidence never enter approval hashes.",
       ],
       applySteps: [
         "Apply with nodel.save_node_file_text or nodel.save_node_file_base64 using expectedHash/currentHash and the matching approval flow.",
       ],
       verifySteps: [
-        "Read the file back and verify the hash/content. For v1 XML, run nodel.verify_ui_file on the saved file. No node reload or readiness wait is expected.",
+        "Read the file back and verify the hash/content. Run nodel.verify_ui_file on saved UI files as advisory analysis; read-back is not browser verification. No node reload or readiness wait is expected.",
       ],
     };
   }
@@ -367,11 +398,17 @@ function baseWorkflow(task: GuidanceTask) {
       ...metadata,
       readSteps: [
         "Use nodel.propose_node_file_edit for exact text replacements in supporting files; never use it for script.py.",
+        "Inspect the existing page first and preserve its format. Use nodel.get_ui_guidelines(format=auto,node=...,path=...) to detect/recommend; incomplete or mixed evidence requires an explicit format, not migration.",
+        "Obtain matching nodel.get_ui_component_reference(format=v1|v2,node=...) and guidance/starter before editing UI. V2 bundled fallback is unverified against deployment; nodel.get_ui_capabilities reports support separately from the saved document format.",
+        "Inspect current node actions/signals and schemas before binding controls. Propose exact edits, then use nodel.verify_ui_file for proposed XML/HTML as advisory analysis only; UI findings never authorize or block supporting-file writes.",
+        "Exact-edit proposal/apply automatically attach uiFeedback for the composed candidate even with includeContent=false; original page evidence retains recognition when final UI markers are removed. uiFeedback=skip avoids advisory reads; v1/v2 force advisory format only.",
       ],
       applySteps: [
         "Apply with nodel.apply_node_file_edit using expectedHash/currentHash and the matching approval flow.",
       ],
-      verifySteps: ["Read the file back and verify the hash/content. No node reload or readiness wait is expected."],
+      verifySteps: [
+        "Read the file back and verify the hash/content separately from advisory UI checks. Run nodel.verify_ui_file on the saved UI, then qualify rendering in an isolated browser; read-back and static checks are not browser verification. No node reload or readiness wait is expected.",
+      ],
     };
   }
   if (task === "parameters") {
@@ -456,7 +493,7 @@ function taskWarnings(config: AppConfig, task: GuidanceTask) {
       "Custom UI/static assets should be placed under content/ because Nodel treats that folder specially; writes outside content/ are allowed but will include an advisory warning. Browser-facing URLs should omit the content/ prefix.",
     );
     warnings.push(
-      "V1 XML validation is static and point/schema-aware; it does not execute XSLT in a browser or prove visual rendering.",
+      "V1 XML and v2 HTML UI feedback is static and advisory, including errors/unavailable checks; it never authorizes or blocks saves. Byte read-back is separate and neither result proves browser rendering. Advisory enrichment runs after write/read-back and lock release.",
     );
   }
   if (task === "restart" && !config.nodeLifecycleEnabled) {

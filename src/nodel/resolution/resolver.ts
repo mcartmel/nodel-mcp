@@ -1,4 +1,5 @@
 import type { AppConfig } from "../../config.js";
+import { reduceNodelName } from "../../shared/nodelName.js";
 import { assertNodeAllowed, isNodeAllowed } from "../../safety/policy.js";
 import { decodeDiscoveredNodes, decodeDiscoveredNodesDetailed, decodeHostStatus } from "../contracts/decoders.js";
 import { NodelHttpTransport } from "../http/transport.js";
@@ -6,7 +7,6 @@ import type { DiscoveredNode, NormalizedNode, ResolvedNode } from "../types.js";
 import {
   bestLocalMatch,
   bestRemoteMatch,
-  getVerySimpleName,
   isAllowedRuntimeOrigin,
   isConfiguredLocalRuntime,
   parseNodeUrlInput,
@@ -52,23 +52,44 @@ export class NodelResolver {
   ) {}
 
   async listLocalNodes(onlyAllowed: boolean): Promise<NormalizedNode[]> {
+    const result = await this.listLocalNodesDetailed();
+    // The public array cannot express incompleteness: never return a silently
+    // filtered catalogue that callers might treat as proof of absence.
+    if (result.rejectedNodes.length > 0)
+      throw publicError("VALIDATION", "Local discovery contains an unrouteable node name; listing is incomplete.");
+    return result.nodes.filter((node) => !onlyAllowed || node.allowed);
+  }
+
+  private async listLocalNodesDetailed() {
     const status = decodeHostStatus(await this.transport.request(runtimeRestUrl(this.config.nodelBaseUrl, "")));
-    return Object.entries(status.nodes ?? {})
-      .map(([key, entry]) => {
-        const name = entry.name || key;
-        return {
-          key,
-          name,
-          desc: entry.desc,
-          started: entry.started,
-          nodelVersion: entry.nodelVersion,
-          webSocketPort: entry.webSocketPort,
-          url: `/nodes/${encodeURIComponent(getVerySimpleName(name))}`,
-          restPathSegment: getVerySimpleName(name),
-          allowed: isNodeAllowed(name, this.config.allowedNodePrefixes),
-        };
-      })
-      .filter((node) => !onlyAllowed || node.allowed);
+    const rejectedNodes: Array<Pick<NormalizedNode, "key" | "name">> = [];
+    const nodes: NormalizedNode[] = [];
+    for (const [key, entry] of Object.entries(status.nodes ?? {})) {
+      const name = entry.name || key;
+      // Route identity must match Nodel.reduce, not the fuzzy discovery matcher.
+      // Policy still applies to the original discovered display name below.
+      const restPathSegment = reduceNodelName(name);
+      let encoded: string;
+      try {
+        encoded = encodeURIComponent(restPathSegment);
+      } catch (error) {
+        if (!(error instanceof URIError)) throw error;
+        rejectedNodes.push({ key, name });
+        continue;
+      }
+      nodes.push({
+        key,
+        name,
+        desc: entry.desc,
+        started: entry.started,
+        nodelVersion: entry.nodelVersion,
+        webSocketPort: entry.webSocketPort,
+        url: `/nodes/${encoded}`,
+        restPathSegment,
+        allowed: isNodeAllowed(name, this.config.allowedNodePrefixes),
+      });
+    }
+    return { nodes, rejectedNodes };
   }
 
   async listNetworkNodeUrls(filter: string): Promise<DiscoveredNode[]> {
@@ -121,11 +142,27 @@ export class NodelResolver {
       urlInput && isConfiguredLocalRuntime(urlInput.url, localUrl)
         ? (urlInput.pathSegment ?? urlInput.queryNode ?? input)
         : input;
-    const match = bestLocalMatch(await this.listLocalNodes(false), localInput);
+    const { nodes, rejectedNodes } = await this.listLocalNodesDetailed();
+    let match: NormalizedNode | undefined;
+    if (rejectedNodes.length > 0) {
+      // Filtering invalid routes must not erase their identity and promote a
+      // fuzzy neighbor. Incomplete discovery permits only one literal name/key
+      // match, with no rejected name/key shadow (including case-folded aliases).
+      // Otherwise stop here: remote/cache fallback cannot prove local identity.
+      const foldedInput = localInput.trim().toLocaleLowerCase();
+      const shadowed = rejectedNodes.some((node) =>
+        [node.name, node.key].some((value) => value.trim().toLocaleLowerCase() === foldedInput),
+      );
+      const exact = nodes.filter((node) => node.name === localInput || node.key === localInput);
+      if (shadowed || exact.length !== 1) throw new NodeResolutionInconclusiveError(input);
+      match = exact[0];
+    } else {
+      match = bestLocalMatch(nodes, localInput);
+    }
     if (!match) return undefined;
     assertNodeAllowed(match.name, this.config.allowedNodePrefixes);
     const nodeBaseUrl = runtimeNodeBaseUrl(this.config.nodelBaseUrl, match.restPathSegment);
-    return {
+    const node: ResolvedNode = {
       input,
       scope: "local" as const,
       key: match.key,
@@ -136,6 +173,7 @@ export class NodelResolver {
       allowed: true,
       resolutionSource: "local" as const,
     };
+    return node;
   }
 
   private async discover(input: string, urlInput: ReturnType<typeof parseNodeUrlInput>) {

@@ -1,6 +1,6 @@
 {
   "generatedFrom": "package-lock.json",
-  "lockfileSha256": "0f7244f5e0f48452ac7cb2a76bdebe5fb91aa0453620c1aceab75786414278a6",
+  "lockfileSha256": "a13297995c6b9a8787f8d97b3284b7bfa2c479c3ca3c46bbbf3fcfde6b25de29",
   "project": {
     "name": "nodel-ai",
     "version": "0.1.0",
@@ -132,6 +132,12 @@
     "encodeurl@2.0.3": {
       "licenses": "MIT",
       "repository": "https://github.com/pillarjs/encodeurl"
+    },
+    "entities@6.0.1": {
+      "licenses": "BSD-2-Clause",
+      "repository": "https://github.com/fb55/entities",
+      "publisher": "Felix Boehm",
+      "email": "me@feedic.com"
     },
     "es-define-property@1.0.1": {
       "licenses": "MIT",
@@ -371,6 +377,13 @@
       "publisher": "Isaac Z. Schlueter",
       "email": "i@izs.me",
       "url": "http://blog.izs.me/"
+    },
+    "parse5@7.3.0": {
+      "licenses": "MIT",
+      "repository": "https://github.com/inikulin/parse5",
+      "publisher": "Ivan Nikulin",
+      "email": "ifaaan@gmail.com",
+      "url": "https://github.com/inikulin"
     },
     "parseurl@1.3.3": {
       "licenses": "MIT",

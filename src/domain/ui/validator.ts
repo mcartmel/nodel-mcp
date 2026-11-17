@@ -19,6 +19,8 @@ import type {
   UiValidationIssue,
 } from "./types.js";
 import { addIssue, walkElements } from "./utils.js";
+import { diagnosticCollector } from "./diagnostics.js";
+import { UI_ADVISORY_LIMITS } from "./limits.js";
 
 export type {
   UiAssetReference,
@@ -30,7 +32,11 @@ export type {
 
 export function validateV1Ui(input: UiValidationInput) {
   const parsed = parseV1Ui(input.content);
-  const issues = [...parsed.errors];
+  // Preserve the existing v1 tool's advertised 1..1000 output option. The
+  // default remains 200; retained diagnostics still have a hard bound.
+  const diagnostics = diagnosticCollector(input.maxIssues, 1000);
+  const { issues } = diagnostics;
+  issues.push(...parsed.errors);
   const pointReferences: UiPointReference[] = [];
   const assets: UiAssetReference[] = [];
   const actionMap = pointMap(normalizePointDefinitions(input.actions));
@@ -39,6 +45,8 @@ export function validateV1Ui(input: UiValidationInput) {
   const schemaMap = parseFrontendSchemas(input.schemasJson, issues);
   const frontendSchemaOverrides = new Map<string, FrontendSchemaOverride>();
   let elementCount = 0;
+  let remainingWork = UI_ADVISORY_LIMITS.maxVisitedNodes;
+  let workTruncated = false;
 
   if (parsed.root) {
     if (parsed.root.name !== "pages")
@@ -63,17 +71,30 @@ export function validateV1Ui(input: UiValidationInput) {
     }
     const files = new Set(input.filePaths);
     walkElements(parsed.root, (element, parent) => {
+      // Reserve work before rules parse action arrays or emit reference objects.
+      // Attribute characters give a conservative upper bound on array entries.
+      const cost =
+        1 +
+        Object.entries(element.attributes).reduce(
+          (total, [name, value]) => total + (name === "action" || name === "join" ? value.length : 1),
+          0,
+        );
+      if (cost > remainingWork || workTruncated) {
+        workTruncated = true;
+        return;
+      }
+      remainingWork -= cost;
       elementCount += 1;
-      validateElementCatalog(element, parent, issues);
+      validateElementCatalog(element, parent, issues, parsed.complete);
       collectPointReferences(element, pointReferences, issues);
-      collectAssets(element, files, assets, issues);
+      collectAssets(element, files, assets, issues, input.filePathsAvailable !== false);
       validateElementValues(
         element,
         parent,
         actionMap,
         signalMap,
         issues,
-        parserDetection.detected,
+        parserDetection.detected && input.schemasAvailable !== false,
         schemaMap,
         frontendSchemaOverrides,
       );
@@ -81,7 +102,44 @@ export function validateV1Ui(input: UiValidationInput) {
   }
 
   emitFrontendSchemaOverrides(frontendSchemaOverrides, issues);
-  validatePointReferences(pointReferences, actionMap, signalMap, issues, parserDetection.detected);
+  if (input.schemasAvailable === false)
+    issues.push({
+      severity: "info",
+      code: "UI_FRONTEND_SCHEMA_CHECK_SKIPPED",
+      message: "Frontend schema-dependent checks were skipped because schema context was unavailable or malformed.",
+      parserSpecific: true,
+    });
+  if (workTruncated)
+    issues.push({
+      severity: "info",
+      code: "UI_V1_RULE_WORK_TRUNCATED",
+      message: "Rule/reference work limit reached; unvisited checks are unknown and counts are lower bounds.",
+    });
+  if (input.actionsAvailable !== false && input.signalsAvailable !== false) {
+    validatePointReferences(pointReferences, actionMap, signalMap, issues, parserDetection.detected);
+  } else {
+    validatePointReferences(
+      pointReferences.filter((reference) =>
+        reference.kind === "action" ? input.actionsAvailable !== false : input.signalsAvailable !== false,
+      ),
+      actionMap,
+      signalMap,
+      issues,
+      parserDetection.detected,
+    );
+    if (input.actionsAvailable === false)
+      issues.push({
+        severity: "info",
+        code: "UI_ACTION_CHECK_SKIPPED",
+        message: "Action existence checks were skipped because action discovery was unavailable.",
+      });
+    if (input.signalsAvailable === false)
+      issues.push({
+        severity: "info",
+        code: "UI_EVENT_CHECK_SKIPPED",
+        message: "Event existence checks were skipped because event discovery was unavailable.",
+      });
+  }
   const liveValues = input.liveEntries
     ? validateLiveValues(parsed.root, input.liveEntries, input.dynamicOptionWarningThreshold ?? 100, issues)
     : undefined;
@@ -90,13 +148,15 @@ export function validateV1Ui(input: UiValidationInput) {
       severity: "info",
       code: "UI_FRONTEND_PARSER_DETECTED",
       message:
-        "Detected the standard Frontend XML parser. Parser-specific schema and generated-point checks were applied.",
+        input.schemasAvailable === false
+          ? "Detected the standard Frontend XML parser. Schema-dependent checks remain unavailable."
+          : "Detected the standard Frontend XML parser. Parser-specific schema and generated-point checks were applied.",
       parserSpecific: true,
     });
 
-  const boundedIssues = issues.slice(0, input.maxIssues ?? 200);
-  const errorCount = issues.filter((issue) => issue.severity === "error").length;
-  const warningCount = issues.filter((issue) => issue.severity === "warning").length;
+  const boundedIssues = issues;
+  const errorCount = diagnostics.counts.error;
+  const warningCount = diagnostics.counts.warning;
   return {
     ok: errorCount === 0,
     format: "v1_xml_xslt",
@@ -110,9 +170,18 @@ export function validateV1Ui(input: UiValidationInput) {
       assetReferenceCount: assets.length,
       errorCount,
       warningCount,
-      infoCount: issues.length - errorCount - warningCount,
+      infoCount: diagnostics.counts.info,
       returnedIssueCount: boundedIssues.length,
-      truncatedIssues: issues.length > boundedIssues.length,
+      truncatedIssues: diagnostics.truncated,
+      incomplete:
+        !parsed.complete ||
+        diagnostics.truncated ||
+        workTruncated ||
+        input.actionsAvailable === false ||
+        input.signalsAvailable === false ||
+        input.schemasAvailable === false ||
+        input.filePathsAvailable === false,
+      countsAreLowerBounds: !parsed.complete || workTruncated,
     },
     issues: boundedIssues,
     generatedPoints: summarizePointReferences(pointReferences),
@@ -124,5 +193,6 @@ export function validateV1Ui(input: UiValidationInput) {
       schemaKeys: Object.keys(schemaMap),
     },
     liveValues,
+    parse: { complete: parsed.complete, truncationReason: parsed.truncationReason, omittedErrors: 0 },
   };
 }
