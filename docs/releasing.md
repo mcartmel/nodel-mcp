@@ -19,7 +19,11 @@ produced.
    provenance. Record the license/provenance review in the release notes.
 5. Generate `reports/dependency-licenses.json` from the exact lockfile with
    `npm run license:report`; review the report and release archive for
-   compatible redistribution terms. `npm run license:check` rejects drift.
+   compatible redistribution terms. For dependency maintenance, update direct
+   pins and `package-lock.json` together, use `npm update` only for compatible
+   ranges, then run `npm ci` followed by `npm run license:report`. Review the
+   report's lockfile SHA and dependency/license changes; `npm run license:check`
+   rejects drift and must remain enabled.
 6. Run `npm ci`, fetch the official Caddy v2.11.3 Linux amd64 validator with
    the CI-only checked helper, then run `npm run release:check` and
    `npm run release:determinism`. The dependency gate blocks high
@@ -116,9 +120,12 @@ is a release blocker.
 | Runtime dependency license report and compatibility review | Pending |               |          |
 | Documentation consistency checks                           | Pending |               |          |
 
-The production audit is clean at high severity. The current full audit has one
-development-only low-severity `esbuild` advisory,
-`GHSA-g7r4-m6w7-qqqr` (Windows development-server file read); it does not
-affect production dependencies or constitute a production exception. Manual
-history, provenance, and license sign-offs remain release-review items and are
-intentionally Pending here.
+The coordinated dependency-security update recorded on 2026-11-17 cleared all
+production audit findings (the preceding production audit had 1 critical, 4
+high, and 4 moderate findings). The full audit still reports five
+development-only findings: four moderate findings in `c8`/`test-exclude` and
+their `glob`/`minimatch` tree, whose available `c8` remediation is a major
+version change, and the low-severity `esbuild` Windows development-server file
+read advisory `GHSA-g7r4-m6w7-qqqr`. These are not production exceptions; review
+them again before each release. Manual history, provenance, and license
+sign-offs remain release-review items and are intentionally Pending here.
