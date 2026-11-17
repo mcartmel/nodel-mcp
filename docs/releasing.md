@@ -120,12 +120,25 @@ is a release blocker.
 | Runtime dependency license report and compatibility review | Pending |               |          |
 | Documentation consistency checks                           | Pending |               |          |
 
-The coordinated dependency-security update recorded on 2026-11-17 cleared all
-production audit findings (the preceding production audit had 1 critical, 4
-high, and 4 moderate findings). The full audit still reports five
-development-only findings: four moderate findings in `c8`/`test-exclude` and
-their `glob`/`minimatch` tree, whose available `c8` remediation is a major
-version change, and the low-severity `esbuild` Windows development-server file
-read advisory `GHSA-g7r4-m6w7-qqqr`. These are not production exceptions; review
-them again before each release. Manual history, provenance, and license
-sign-offs remain release-review items and are intentionally Pending here.
+The coordinated dependency-security and compatible-tooling update recorded on
+2026-11-17 cleared all known audit findings by updating the coverage toolchain,
+ESLint family, and TypeScript runner. Re-run both the production and full
+development dependency audits for every release; an audit result is time-bound
+and does not replace the manual history, provenance, or license sign-offs,
+which remain release-review items and are intentionally Pending here.
+
+The supported application runtime remains Node.js 22 or newer. Development
+tooling has a higher minimum: use Node.js 22.13 or newer on the Node 22 line,
+or Node.js 24 or newer. Node.js 23 is not supported by ESLint 10. CI continues
+to test on Node 22, so development and release checks use a runtime that meets
+that tooling requirement. The committed
+`@types/node` version intentionally targets Node 22 APIs; do not advance it to
+the newest Node major just to follow the host runtime or expose APIs outside the
+supported baseline.
+
+The `c8` 12 coverage tool depends on `test-exclude` 8, whose declared `glob`
+13 and `minimatch` 10 ranges have no releases outside current audit advisories.
+The narrow `test-exclude` overrides therefore select patched `glob` 14.0.6 and
+`minimatch` 11.0.9. The regression suite exercises the real include/exclude
+glob behavior, and the normal c8 run still checks remapped TypeScript source
+and existing statement/branch thresholds.

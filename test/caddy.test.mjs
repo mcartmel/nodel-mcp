@@ -1091,7 +1091,9 @@ async function waitForCaddyLocalRoot(directory) {
     try {
       return await readCaddyLocalRoot(rootCertificate);
     } catch (error) {
-      if (error?.code !== "ENOENT") throw new Error("Caddy local root certificate is unavailable");
+      if (error?.code !== "ENOENT") {
+        throw new Error("Caddy local root certificate is unavailable", { cause: error });
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
