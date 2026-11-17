@@ -109,6 +109,10 @@ function assertDependabotGroups({ npm, actions }) {
       versions: ["7.x"],
       "update-types": ["version-update:semver-major"],
     },
+    {
+      "dependency-name": "@types/node",
+      "update-types": ["version-update:semver-major"],
+    },
   ]);
 }
 
@@ -135,6 +139,28 @@ test("Dependabot assertions reject an incomplete ESLint family", async () => {
 test("Dependabot assertions reject blanket ignores", async () => {
   const config = await dependabotConfig({
     ignore: [{ "dependency-name": "*", versions: [">=0"] }],
+  });
+
+  assert.throws(() => assertDependabotGroups(config), assert.AssertionError);
+});
+
+test("Dependabot assertions reject Node typings ignores broader than major updates", async () => {
+  const config = await dependabotConfig({
+    ignore: [
+      { "dependency-name": "typescript", versions: ["7.x"], "update-types": ["version-update:semver-major"] },
+      { "dependency-name": "@types/node", versions: [">=23"], "update-types": ["version-update:semver-major"] },
+    ],
+  });
+
+  assert.throws(() => assertDependabotGroups(config), assert.AssertionError);
+});
+
+test("Dependabot assertions reject Node typings ignores without a major-only scope", async () => {
+  const config = await dependabotConfig({
+    ignore: [
+      { "dependency-name": "typescript", versions: ["7.x"], "update-types": ["version-update:semver-major"] },
+      { "dependency-name": "@types/node" },
+    ],
   });
 
   assert.throws(() => assertDependabotGroups(config), assert.AssertionError);

@@ -134,7 +134,9 @@ to test on Node 22, so development and release checks use a runtime that meets
 that tooling requirement. The committed
 `@types/node` version intentionally targets Node 22 APIs; do not advance it to
 the newest Node major just to follow the host runtime or expose APIs outside the
-supported baseline.
+supported baseline. Dependabot major updates for Node typings are ignored so a
+new typings major receives an explicit supported-runtime-baseline review; patch
+and minor updates remain allowed.
 
 The `c8` 12 coverage tool depends on `test-exclude` 8, whose declared `glob`
 13 and `minimatch` 10 ranges have no releases outside current audit advisories.
