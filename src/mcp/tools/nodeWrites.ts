@@ -51,7 +51,7 @@ function registerReadTools(server: McpServer, nodelClient: NodelClient) {
         const signalName = resolveDefinitionName(signals.signals, signal, "signal/event");
         const query =
           args && Object.keys(args).length > 0
-            ? `?${new URLSearchParams(Object.entries(args).map(([key, value]) => [key, String(value)])).toString()}`
+            ? `?${new URLSearchParams(Object.entries(args).map(([key, value]) => [key, String(value)] as [string, string])).toString()}`
             : "";
         const result = await nodelClient.nodeRequest(signals.node, `events/${encodeURIComponent(signalName)}${query}`, {
           responseMode: "json",

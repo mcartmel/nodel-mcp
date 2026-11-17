@@ -1,9 +1,11 @@
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { assertCanonicalCoverage } from "./coverage-loader.mjs";
 
 const c8Args = [
   "--reporter=text",
   "--reporter=json",
+  "--temp-directory=coverage/tmp",
   "--all",
   "--exclude-after-remap",
   "--exclude",
@@ -25,8 +27,6 @@ const c8Args = [
 ];
 
 const testFiles = (await readdir("test")).filter((file) => file.endsWith(".test.mjs") || file.endsWith(".test.ts"));
-const mjs = testFiles.filter((file) => file.endsWith(".mjs")).map((file) => `test/${file}`);
-const ts = testFiles.filter((file) => file.endsWith(".ts")).map((file) => `test/${file}`);
 
 function run(args) {
   return new Promise((resolve, reject) => {
@@ -36,6 +36,20 @@ function run(args) {
   });
 }
 
-await run([...c8Args, "node", "--test", ...mjs]);
-await run([...c8Args, "--clean=false", "tsx", "--test", ...ts]);
+// Every test worker uses the same loader stack and the same dist module URLs.
+// Merging tsc and tsx output for src/*.ts combines incompatible V8 offsets and
+// can invent branch/function hits even when the TS suite merely imports a file.
+await run([
+  ...c8Args,
+  process.execPath,
+  "--import",
+  "./scripts/coverage-register.mjs",
+  "--test",
+  ...testFiles.map((file) => `test/${file}`),
+]);
+for (const file of await readdir("coverage/tmp")) {
+  if (!file.endsWith(".json")) continue;
+  const raw = JSON.parse(await readFile(`coverage/tmp/${file}`, "utf8"));
+  if (raw.result) assertCanonicalCoverage(raw.result);
+}
 await import("./check-coverage.mjs");
