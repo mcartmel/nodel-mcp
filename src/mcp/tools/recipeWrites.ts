@@ -55,6 +55,15 @@ const textEditSchema = z
   })
   .strict();
 const textEdits = z.array(textEditSchema).min(1);
+const uiFeedbackSchema = z
+  .enum(["auto", "skip", "v1", "v2"])
+  .optional()
+  .default("auto")
+  .describe(
+    "Advisory static UI analysis only; auto recognizes existing/proposed UI, skip avoids advisory reads, v1/v2 force a format. Never changes authorization or saved bytes.",
+  );
+const uiFeedbackDescription =
+  " Recognized UI candidates receive bounded advisory feedback (uiFeedback=auto by default; skip/v1/v2 available). UI findings never gate writes or prove browser rendering; read-back verification remains separate.";
 
 export function registerRecipeWriteTools(server: McpServer, nodelClient: NodelClient, config: AppConfig) {
   server.registerTool(
@@ -167,19 +176,21 @@ function registerProposalTools(server: McpServer, client: NodelClient, config: A
     {
       title: "Propose Supporting Text File Save",
       description:
-        "Read a supporting node file and propose a text save via REST/files/save. This rejects script.py, does not reload the node, and does not run recipe validation.",
+        "Read a supporting node file and propose a text save via REST/files/save. This rejects script.py, does not reload the node, and does not run recipe validation." +
+        uiFeedbackDescription,
       inputSchema: {
         ...nodeInput,
         path: z.string().min(1),
         content: z.string().describe("Complete replacement text content."),
+        uiFeedback: uiFeedbackSchema,
         expectedHash: z.string().optional(),
         detail: z.string().optional(),
       },
       annotations: proposalToolAnnotations,
     },
-    async ({ node, path, content, expectedHash, detail }) =>
+    async ({ node, path, content, expectedHash, detail, uiFeedback }) =>
       toolResult(async () =>
-        proposeNodeFile(client, config, node, path, normalizeTextContent(content), expectedHash, detail),
+        proposeNodeFile(client, config, node, path, normalizeTextContent(content), expectedHash, detail, uiFeedback),
       ),
   );
   server.registerTool(
@@ -187,19 +198,30 @@ function registerProposalTools(server: McpServer, client: NodelClient, config: A
     {
       title: "Propose Supporting Base64 File Save",
       description:
-        "Read a supporting node file and propose a base64/binary save via REST/files/save. This rejects script.py, does not reload the node, and does not run recipe validation.",
+        "Read a supporting node file and propose a base64/binary save via REST/files/save. This rejects script.py, does not reload the node, and does not run recipe validation." +
+        uiFeedbackDescription,
       inputSchema: {
         ...nodeInput,
         path: z.string().min(1),
         contentBase64: z.string().describe("Complete replacement content encoded as standard base64."),
+        uiFeedback: uiFeedbackSchema,
         expectedHash: z.string().optional(),
         detail: z.string().optional(),
       },
       annotations: proposalToolAnnotations,
     },
-    async ({ node, path, contentBase64, expectedHash, detail }) =>
+    async ({ node, path, contentBase64, expectedHash, detail, uiFeedback }) =>
       toolResult(async () =>
-        proposeNodeFile(client, config, node, path, normalizeBase64Content(contentBase64), expectedHash, detail),
+        proposeNodeFile(
+          client,
+          config,
+          node,
+          path,
+          normalizeBase64Content(contentBase64),
+          expectedHash,
+          detail,
+          uiFeedback,
+        ),
       ),
   );
   server.registerTool(
@@ -207,20 +229,32 @@ function registerProposalTools(server: McpServer, client: NodelClient, config: A
     {
       title: "Propose Supporting Text File Edit",
       description:
-        "Read a supporting text file and apply exact text replacements in memory without modifying the node. This rejects script.py and does not run recipe validation.",
+        "Read a supporting text file and apply exact text replacements in memory without modifying the node. This rejects script.py and does not run recipe validation." +
+        uiFeedbackDescription,
       inputSchema: {
         ...nodeInput,
         path: z.string().min(1),
         edits: textEdits,
+        uiFeedback: uiFeedbackSchema,
         expectedHash: z.string().optional(),
         detail: z.string().optional(),
         includeContent: z.boolean().optional().default(true),
       },
       annotations: proposalToolAnnotations,
     },
-    async ({ node, path, edits, expectedHash, detail, includeContent }) =>
+    async ({ node, path, edits, expectedHash, detail, includeContent, uiFeedback }) =>
       toolResult(async () =>
-        proposeNodeFileEdit(client, config, node, path, edits, expectedHash, detail, includeContent ?? true),
+        proposeNodeFileEdit(
+          client,
+          config,
+          node,
+          path,
+          edits,
+          expectedHash,
+          detail,
+          includeContent ?? true,
+          uiFeedback,
+        ),
       ),
   );
 }
@@ -300,11 +334,13 @@ function registerSaveTools(server: McpServer, client: NodelClient, config: AppCo
     {
       title: "Save Supporting Text File",
       description:
-        "Save a supporting text file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation.",
+        "Save a supporting text file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation." +
+        uiFeedbackDescription,
       inputSchema: {
         ...nodeInput,
         path: z.string().min(1),
         content: z.string().describe("Complete replacement text content."),
+        uiFeedback: uiFeedbackSchema,
         expectedHash: z.string().optional(),
         dryRun: z.boolean().optional().default(false),
         approvalId: z.string().optional(),
@@ -312,7 +348,7 @@ function registerSaveTools(server: McpServer, client: NodelClient, config: AppCo
       },
       annotations: writeToolAnnotations,
     },
-    async ({ node, path, content, expectedHash, dryRun, approvalId, reason }) =>
+    async ({ node, path, content, expectedHash, dryRun, approvalId, reason, uiFeedback }) =>
       toolResult(async () =>
         saveNodeFile(
           client,
@@ -325,6 +361,8 @@ function registerSaveTools(server: McpServer, client: NodelClient, config: AppCo
           reason,
           { operation: "save_node_file" },
           approvalId,
+          false,
+          uiFeedback,
         ),
       ),
   );
@@ -333,11 +371,13 @@ function registerSaveTools(server: McpServer, client: NodelClient, config: AppCo
     {
       title: "Save Supporting Base64 File",
       description:
-        "Save a supporting binary/base64 file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation.",
+        "Save a supporting binary/base64 file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation." +
+        uiFeedbackDescription,
       inputSchema: {
         ...nodeInput,
         path: z.string().min(1),
         contentBase64: z.string().describe("Complete replacement content encoded as standard base64."),
+        uiFeedback: uiFeedbackSchema,
         expectedHash: z.string().optional(),
         dryRun: z.boolean().optional().default(false),
         approvalId: z.string().optional(),
@@ -345,7 +385,7 @@ function registerSaveTools(server: McpServer, client: NodelClient, config: AppCo
       },
       annotations: writeToolAnnotations,
     },
-    async ({ node, path, contentBase64, expectedHash, dryRun, approvalId, reason }) =>
+    async ({ node, path, contentBase64, expectedHash, dryRun, approvalId, reason, uiFeedback }) =>
       toolResult(async () =>
         saveNodeFile(
           client,
@@ -358,6 +398,8 @@ function registerSaveTools(server: McpServer, client: NodelClient, config: AppCo
           reason,
           { operation: "save_node_file" },
           approvalId,
+          false,
+          uiFeedback,
         ),
       ),
   );
@@ -366,11 +408,13 @@ function registerSaveTools(server: McpServer, client: NodelClient, config: AppCo
     {
       title: "Apply Supporting Text File Edit",
       description:
-        "Apply exact text replacements to a supporting text file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation.",
+        "Apply exact text replacements to a supporting text file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation." +
+        uiFeedbackDescription,
       inputSchema: {
         ...nodeInput,
         path: z.string().min(1),
         edits: textEdits,
+        uiFeedback: uiFeedbackSchema,
         expectedHash: z.string().optional(),
         dryRun: z.boolean().optional().default(false),
         approvalId: z.string().optional(),
@@ -378,9 +422,20 @@ function registerSaveTools(server: McpServer, client: NodelClient, config: AppCo
       },
       annotations: writeToolAnnotations,
     },
-    async ({ node, path, edits, expectedHash, dryRun, approvalId, reason }) =>
+    async ({ node, path, edits, expectedHash, dryRun, approvalId, reason, uiFeedback }) =>
       toolResult(async () =>
-        applyNodeFileEdit(client, config, node, path, edits, expectedHash, dryRun ?? false, reason, approvalId),
+        applyNodeFileEdit(
+          client,
+          config,
+          node,
+          path,
+          edits,
+          expectedHash,
+          dryRun ?? false,
+          reason,
+          approvalId,
+          uiFeedback,
+        ),
       ),
   );
 }

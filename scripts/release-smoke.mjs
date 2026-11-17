@@ -5,14 +5,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { request } from "node:http";
 import { createServer } from "node:net";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArchiveMembers } from "./release-safety.mjs";
 import { assertCaddyReleaseMembers } from "./caddy-release-safety.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-const archive = join(root, "artifacts", `nodel-ai-v${pkg.version}.tar.gz`);
-const artifactDir = join(root, "artifacts");
+const artifactDir = process.env.RELEASE_ARTIFACT_DIR || join(root, "artifacts");
+const archive = join(artifactDir, `nodel-ai-v${pkg.version}.tar.gz`);
 const expectedAssets = [
   archive,
   join(artifactDir, "SBOM.cdx.json"),
@@ -63,6 +63,31 @@ try {
   ]) {
     if (!archiveMembers.includes(member)) throw new Error(`Missing Caddy release member: ${member}`);
   }
+  const v2ReferenceMembers = [
+    `${archiveRoot}/dist/nodel/v2/contract.json`,
+    `${archiveRoot}/dist/nodel/v2/quickstart.json`,
+    `${archiveRoot}/dist/nodel/v2/provenance.json`,
+    `${archiveRoot}/THIRD_PARTY_NOTICES.md`,
+  ];
+  for (const member of v2ReferenceMembers) {
+    if (!archiveMembers.includes(member)) throw new Error(`Missing packaged v2/parser asset: ${member}`);
+  }
+  const packagedContract = await readFile(join(temp, archiveRoot, "dist/nodel/v2/contract.json"));
+  const packagedStarter = JSON.parse(await readFile(join(temp, archiveRoot, "dist/nodel/v2/quickstart.json"), "utf8"));
+  const packagedProvenance = JSON.parse(
+    await readFile(join(temp, archiveRoot, "dist/nodel/v2/provenance.json"), "utf8"),
+  );
+  const contractHash = createHash("sha256").update(packagedContract).digest("hex");
+  const starterHash = createHash("sha256").update(packagedStarter).digest("hex");
+  if (contractHash !== packagedProvenance.sha256 || contractHash !== packagedProvenance.contentHash)
+    throw new Error("Packaged v2 contract does not match its pinned provenance hash");
+  if (starterHash !== packagedProvenance.starterSha256)
+    throw new Error("Packaged v2 starter does not match its pinned provenance hash");
+  const notices = await readFile(join(temp, archiveRoot, "THIRD_PARTY_NOTICES.md"), "utf8");
+  if (!notices.includes(packagedProvenance.revision) || !notices.includes(contractHash))
+    throw new Error("Packaged third-party notices omit the v2 reference provenance");
+  if (!archiveMembers.includes(`${archiveRoot}/dist/domain/ui/html.js`))
+    throw new Error("Missing compiled static HTML validation code");
   for (const [member, mode] of [
     [`${archiveRoot}/scripts/caddy-render.mjs`, 0o755],
     [`${archiveRoot}/scripts/caddy-check.mjs`, 0o755],
@@ -95,6 +120,9 @@ try {
   });
   if (spawnSync("npm", ["ci", "--omit=dev", "--ignore-scripts"], { cwd: app, stdio: "inherit" }).status !== 0)
     throw new Error("Production npm ci failed");
+  const parse5Package = JSON.parse(await readFile(join(app, "node_modules/parse5/package.json"), "utf8"));
+  if (parse5Package.version !== "7.3.0" || parse5Package.license !== "MIT")
+    throw new Error("Packaged production install did not resolve the pinned MIT parse5 parser");
   if (
     await stat(join(app, "node_modules/typescript")).then(
       () => true,
@@ -149,6 +177,7 @@ try {
       MCP_PORT: String(port),
       MCP_BIND_ADDRESS: "127.0.0.1",
       NODEL_BASE_URL: "http://127.0.0.1:9",
+      NODEL_MCP_TOKEN: "",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -173,6 +202,27 @@ try {
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
     if (i === 29) throw new Error("Health probe failed");
+  }
+  const sdkBase = join(app, "node_modules/@modelcontextprotocol/sdk/dist/esm");
+  const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
+    import(pathToFileURL(join(sdkBase, "client/index.js"))),
+    import(pathToFileURL(join(sdkBase, "client/streamableHttp.js"))),
+  ]);
+  const client = new Client({ name: "release-package-smoke", version: "1" });
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`));
+  try {
+    await client.connect(transport);
+    const response = await client.callTool({
+      name: "nodel.get_ui_guidelines",
+      arguments: { format: "v2" },
+    });
+    const text = response.content?.map((item) => (item.type === "text" ? item.text : "")).join("\n") ?? "";
+    if (response.isError || !text.includes('"contractSource": "bundled"') || !text.includes(contractHash))
+      throw new Error(`Packaged offline v2 guidance did not return pinned contract provenance: ${text}`);
+    if (!text.includes("nodel-app") || !text.includes("content/index.html"))
+      throw new Error("Packaged offline v2 guidance omitted the starter workflow");
+  } finally {
+    await transport.close();
   }
   const mode = (await stat(join(temp, "state"))).mode & 0o777;
   if (mode !== 0o700) throw new Error(`State mode is ${mode.toString(8)}`);

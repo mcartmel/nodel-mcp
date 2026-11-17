@@ -2,3 +2,5 @@ docs/tool-reference.generated.md
 coverage/
 dist/
 reports/
+# Exact upstream artifact bytes; verified by refresh-v2-reference and provenance hashes.
+src/nodel/v2/contract.json

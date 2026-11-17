@@ -9,10 +9,19 @@ import {
   decodeHostStatus,
 } from "./contracts/decoders.js";
 import { NodelHttpTransport } from "./http/transport.js";
+import { BoundedReadLimiter, createReadScope, waitForRead } from "./http/bounded.js";
+import { readResolvedStaticAsset, staticAssetUrl } from "./http/staticAssets.js";
 import { assertSafeRecipePath } from "./pathPolicy.js";
-import { isAllowedRuntimeOrigin, runtimeRestUrl } from "./resolution/matching.js";
+import {
+  isAllowedRuntimeOrigin,
+  normalizeRuntimeBaseUrl,
+  runtimeNodeBaseUrl,
+  runtimeRestUrl,
+} from "./resolution/matching.js";
 import { NodelResolver } from "./resolution/resolver.js";
 import { publicError } from "../shared/publicErrors.js";
+import { assertNodeAllowed } from "../safety/policy.js";
+import { reduceNodelName } from "../shared/nodelName.js";
 import type {
   NodelActivityResponse,
   NodelBindingsResponse,
@@ -27,6 +36,11 @@ import type {
   NodeRequestOptions,
   ResolvedNode,
   TextNodeRequestOptions,
+  NodeReadOptions,
+  StaticAsset,
+  StaticAssetReadOptions,
+  ResolvedStaticAssetRequest,
+  StaticAssetReadResult,
 } from "./types.js";
 
 export { fetchAndConsumeWithTimeout, fetchWithTimeout } from "./http/transport.js";
@@ -38,7 +52,9 @@ export {
   NodelRedirectError,
   NodelTimeoutError,
   NodelTransportError,
+  NodelResponseTooLargeError,
 } from "./http/errors.js";
+export { NODEL_STATIC_ASSET_PATHS, NODEL_STATIC_READ_LIMITS } from "./http/staticAssets.js";
 export { getVerySimpleName, normalizeRuntimeBaseUrl, runtimeRestUrl } from "./resolution/matching.js";
 
 type NodeReference = string | ResolvedNode;
@@ -47,6 +63,8 @@ type NodeReference = string | ResolvedNode;
 export class NodelClient {
   private readonly transport: NodelHttpTransport;
   private readonly resolver: NodelResolver;
+  private readonly trustedNodes = new WeakSet<ResolvedNode>();
+  private readonly staticReads = new BoundedReadLimiter();
 
   constructor(private readonly config: AppConfig) {
     this.transport = new NodelHttpTransport(config.nodelRequestTimeoutMs);
@@ -70,24 +88,67 @@ export class NodelClient {
   listNetworkNodeUrlsForNode(name: string) {
     return this.resolver.listNetworkNodeUrlsForNode(name);
   }
-  resolveNode(node: string) {
-    return this.resolver.resolveNode(node);
+  resolveNode(node: string, options?: NodeReadOptions) {
+    return this.withReadOptions(options, async (readOptions) => this.resolve(node, readOptions));
   }
-  resolveRemoteNode(node: string) {
-    return this.resolver.resolveRemoteNode(node);
+  async resolveRemoteNode(node: string) {
+    return this.rememberNode(await this.resolver.resolveRemoteNode(node));
   }
-  resolveNodeForDeletion(node: string) {
-    return this.resolver.resolveNodeForDeletion(node);
-  }
-
-  async getNodeActions(node: NodeReference): Promise<{ node: ResolvedNode; actions: NodelDefinitionsResponse }> {
-    const resolved = await this.resolve(node);
-    return { node: resolved, actions: decodeDefinitions(await this.nodeRequestValue(resolved, "actions")) };
+  async resolveNodeForDeletion(node: string) {
+    return this.rememberNode(await this.resolver.resolveNodeForDeletion(node));
   }
 
-  async getNodeSignals(node: NodeReference): Promise<{ node: ResolvedNode; signals: NodelDefinitionsResponse }> {
-    const resolved = await this.resolve(node);
-    return { node: resolved, signals: decodeDefinitions(await this.nodeRequestValue(resolved, "events")) };
+  /** Resolve through trusted discovery, never interpret a caller URL as a fetch target. */
+  resolveStaticAssetRequest(
+    node: NodeReference,
+    artifact: StaticAsset,
+    options: StaticAssetReadOptions = {},
+  ): Promise<ResolvedStaticAssetRequest> {
+    return this.withReadOptions(
+      { ...options, timeoutMs: Math.min(options.timeoutMs ?? 10_000, 10_000) },
+      async (readOptions) => {
+        const resolved = await this.resolve(node, readOptions);
+        return Object.freeze({
+          node: resolved,
+          artifact,
+          url: staticAssetUrl(resolved, artifact).toString(),
+          deadlineMs: readOptions?.deadlineMs,
+        });
+      },
+    );
+  }
+
+  /** Fixed node-root artifacts only. No authored URL or manifest link is ever fetched. */
+  readStaticAsset(
+    node: NodeReference,
+    artifact: StaticAsset,
+    options: StaticAssetReadOptions = {},
+  ): Promise<StaticAssetReadResult> {
+    return this.withReadOptions(
+      { ...options, timeoutMs: Math.min(options.timeoutMs ?? 10_000, 10_000) },
+      async (readOptions) => {
+        return this.staticReads.run(readOptions?.signal, async () => {
+          const resolved = await this.resolve(node, readOptions);
+          return readResolvedStaticAsset(resolved, artifact, this.config.nodelRequestTimeoutMs, readOptions);
+        });
+      },
+    );
+  }
+
+  async getNodeActions(
+    node: NodeReference,
+    options?: NodeReadOptions,
+  ): Promise<{ node: ResolvedNode; actions: NodelDefinitionsResponse }> {
+    const result = await this.nodeRequest(node, "actions", options);
+    return { node: result.node, actions: decodeDefinitions(result.response) };
+  }
+
+  async getNodeSignals(
+    node: NodeReference,
+    options?: NodeReadOptions,
+  ): Promise<{ node: ResolvedNode; signals: NodelDefinitionsResponse }> {
+    const result = await this.nodeRequest(node, "events", options);
+    return { node: result.node, signals: decodeDefinitions(result.response) };
   }
 
   async getNodeBindings(
@@ -101,25 +162,32 @@ export class NodelClient {
     return { node: resolved, schema: decodeBindingsSchema(schema), bindings: decodeBindings(bindings) };
   }
 
-  async getNodeFiles(node: NodeReference): Promise<{ node: ResolvedNode; files: NodelFilesResponse }> {
-    const resolved = await this.resolve(node);
-    return { node: resolved, files: decodeFiles(await this.nodeRequestValue(resolved, "files")) };
+  async getNodeFiles(
+    node: NodeReference,
+    options?: NodeReadOptions,
+  ): Promise<{ node: ResolvedNode; files: NodelFilesResponse }> {
+    const result = await this.nodeRequest(node, "files", options);
+    return { node: result.node, files: decodeFiles(result.response) };
   }
 
-  async getNodeFileContents(node: NodeReference, path: string): Promise<string> {
-    const resolved = await this.resolve(node);
+  async getNodeFileContents(node: NodeReference, path: string, options?: NodeReadOptions): Promise<string> {
     const safePath = assertSafeRecipePath(path);
-    return this.nodeRequestValue(resolved, `files/contents?path=${encodeURIComponent(safePath)}`, {
-      responseMode: "text",
-    });
+    return (
+      await this.nodeRequest(node, `files/contents?path=${encodeURIComponent(safePath)}`, {
+        ...options,
+        responseMode: "text",
+      })
+    ).response;
   }
 
-  async getNodeFileBytes(node: NodeReference, path: string): Promise<Uint8Array> {
-    const resolved = await this.resolve(node);
+  async getNodeFileBytes(node: NodeReference, path: string, options?: NodeReadOptions): Promise<Uint8Array> {
     const safePath = assertSafeRecipePath(path);
-    return this.nodeRequestValue(resolved, `files/contents?path=${encodeURIComponent(safePath)}`, {
-      responseMode: "bytes",
-    });
+    return (
+      await this.nodeRequest(node, `files/contents?path=${encodeURIComponent(safePath)}`, {
+        ...options,
+        responseMode: "bytes",
+      })
+    ).response;
   }
 
   async getNodeActivity(
@@ -167,8 +235,13 @@ export class NodelClient {
     restPath: string,
     options: NodeRequestOptions = {},
   ): Promise<{ node: ResolvedNode; response: unknown }> {
-    const resolved = await this.resolve(node);
-    return { node: resolved, response: await this.nodeRequestValue(resolved, restPath, options) };
+    return this.withReadOptions(options, async (readOptions) => {
+      const resolved = await this.resolve(node, readOptions);
+      return {
+        node: resolved,
+        response: await this.nodeRequestValue(resolved, restPath, { ...options, ...readOptions }),
+      };
+    });
   }
 
   runtimeRequest<T = unknown>(
@@ -191,8 +264,75 @@ export class NodelClient {
     }
   }
 
-  private resolve(node: NodeReference) {
-    return typeof node === "string" ? this.resolveNode(node) : Promise.resolve(node);
+  /**
+   * Explicit-runtime authority, not discovery: creation readiness must stay on
+   * the runtime that accepted the authorized POST even when a local name matches.
+   * Only a fixed nodes/<reduced-name>/ namespace is minted, after the same runtime
+   * origin and node-prefix policies used by creation. Caller objects still never
+   * enter trustedNodes; copies must go back through ordinary trusted discovery.
+   */
+  createRuntimeNodeReference(runtimeUrl: string, name: string): ResolvedNode {
+    const runtime = normalizeRuntimeBaseUrl(runtimeUrl);
+    this.assertRuntimeUrlAllowed(runtime);
+    assertNodeAllowed(name, this.config.allowedNodePrefixes);
+    // Java SimpleName uses Nodel.reduce, not discovery's approximate UI slug.
+    // Do not route the original display name: NanoHTTPD decodes percent escapes
+    // BEFORE NodelHostHTTPD splits '/', so even an encoded original slash could
+    // select a different node/path. Reduce first, then encode exactly one segment.
+    const segment = reduceNodelName(name);
+    if (!segment) throw publicError("VALIDATION", "Runtime node name must have a non-empty Nodel reduced name.");
+    const nodeBaseUrl = runtimeNodeBaseUrl(runtime, segment);
+    return this.rememberNode({
+      input: nodeBaseUrl,
+      scope: runtime === normalizeRuntimeBaseUrl(this.config.nodelBaseUrl) ? "local" : "remote",
+      name,
+      restPathSegment: segment,
+      address: nodeBaseUrl,
+      url: nodeBaseUrl,
+      nodeBaseUrl,
+      allowed: true,
+    });
+  }
+
+  private async resolve(node: NodeReference, options?: NodeReadOptions) {
+    if (typeof node !== "string" && this.trustedNodes.has(node)) return node;
+    const input = typeof node === "string" ? node : node.input;
+    if (typeof input !== "string") throw publicError("VALIDATION", "Node reference must have a resolution input.");
+    if (!options?.signal) return this.rememberNode(await this.resolver.resolveNode(input));
+    options.signal.throwIfAborted();
+    // Isolate bounded discovery from the legacy resolver without changing its
+    // transport/retry/cache defaults. The real discovery requests share the scope's signal.
+    const resolver = new NodelResolver(
+      this.config,
+      new NodelHttpTransport(this.config.nodelRequestTimeoutMs, {
+        ...options,
+        maxResponseBytes: 2 * 1024 * 1024,
+      }),
+    );
+    return this.rememberNode(await waitForRead(resolver.resolveNode(input), options.signal));
+  }
+  private rememberNode(node: ResolvedNode) {
+    Object.freeze(node);
+    this.trustedNodes.add(node);
+    return node;
+  }
+  private async withReadOptions<T>(
+    options: NodeReadOptions | undefined,
+    consume: (options?: NodeReadOptions) => Promise<T>,
+  ): Promise<T> {
+    if (
+      !options ||
+      ![options.signal, options.timeoutMs, options.deadlineMs, options.maxResponseBytes].some(
+        (value) => value !== undefined,
+      )
+    )
+      return consume();
+    const scope = createReadScope(new URL(this.config.nodelBaseUrl), this.config.nodelRequestTimeoutMs, options);
+    try {
+      return await consume(scope.options);
+    } finally {
+      scope.close();
+    }
   }
   private nodeRequestValue<T = unknown>(
     node: ResolvedNode,
@@ -223,10 +363,16 @@ export class NodelClient {
       }
     }
     const init = { method: options.method ?? "GET", headers, body };
-    if (options.responseMode === "text") return this.transport.request(url, init, "text");
-    if (options.responseMode === "bytes") return this.transport.request(url, init, "bytes");
-    if (options.responseMode === "empty") return this.transport.request(url, init, "empty");
-    return this.transport.request(url, init, "json");
+    const readOptions = {
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      deadlineMs: options.deadlineMs,
+      maxResponseBytes: options.maxResponseBytes,
+    };
+    if (options.responseMode === "text") return this.transport.request(url, init, "text", readOptions);
+    if (options.responseMode === "bytes") return this.transport.request(url, init, "bytes", readOptions);
+    if (options.responseMode === "empty") return this.transport.request(url, init, "empty", readOptions);
+    return this.transport.request(url, init, "json", readOptions);
   }
 }
 

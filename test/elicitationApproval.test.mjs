@@ -328,7 +328,8 @@ test("stateful sessions publish before the first SDK tool call and clean up thro
   }
 });
 
-test("stateful session endpoints enforce expiry, capacity, refresh, GET, and DELETE status", async () => {
+test("stateful session endpoints enforce expiry, capacity, refresh, GET, and DELETE status", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-17T10:00:00.000Z") });
   const app = await bindApprovalApp({}, { maxStatefulMcpSessions: 1, statefulMcpSessionIdleMs: 30 });
   const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
   try {
@@ -358,7 +359,7 @@ test("stateful session endpoints enforce expiry, capacity, refresh, GET, and DEL
     assert.equal(response.status, 200);
     response.body?.cancel();
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    t.mock.timers.tick(20);
     response = await fetch(app.baseUrl, {
       method: "POST",
       headers: { ...headers, "mcp-session-id": sessionId, "mcp-protocol-version": "2025-11-25" },
@@ -369,7 +370,10 @@ test("stateful session endpoints enforce expiry, capacity, refresh, GET, and DEL
 
     response = await fetch(app.baseUrl, { method: "POST", headers, body: JSON.stringify(initialize(3)) });
     assert.equal(response.status, 503);
-    await new Promise((resolve) => setTimeout(resolve, 35));
+    t.mock.timers.tick(20);
+    response = await fetch(app.baseUrl, { method: "POST", headers, body: JSON.stringify(initialize(4)) });
+    assert.equal(response.status, 503);
+    t.mock.timers.tick(11);
     response = await fetch(app.baseUrl, { method: "POST", headers, body: JSON.stringify(initialize(4)) });
     assert.equal(response.status, 200);
     const replacementId = response.headers.get("mcp-session-id");

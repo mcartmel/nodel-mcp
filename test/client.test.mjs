@@ -186,20 +186,16 @@ test("facade methods use an already resolved node without resolving again", asyn
   withFetch(async (calls) => {
     globalThis.fetch = async (url) => {
       calls.push(url.toString());
+      if (url.toString() === "http://127.0.0.1:8086/REST") return jsonResponse({ nodes: {} });
+      if (url.toString() === "http://127.0.0.1:8086/REST/nodeURLs")
+        return jsonResponse([{ node: "Display", address: "http://203.0.113.8:8085/nodes/Display/" }]);
       assert.equal(url.toString(), "http://203.0.113.8:8085/nodes/Display/REST/actions");
       return jsonResponse({ go: { title: "Go" } });
     };
-    const node = /** @type {import("../dist/nodel/types.js").ResolvedNode} */ ({
-      input: "Display",
-      scope: "remote",
-      name: "Display",
-      address: "http://203.0.113.8:8085/nodes/Display/",
-      url: "http://203.0.113.8:8085/nodes/Display/",
-      nodeBaseUrl: "http://203.0.113.8:8085/nodes/Display/",
-      allowed: true,
-      resolutionSource: "discovery",
-    });
-    const result = await new NodelClient(testConfig()).getNodeActions(node);
+    const client = new NodelClient(testConfig());
+    const node = await client.resolveNode("Display");
+    calls.length = 0;
+    const result = await client.getNodeActions(node);
     assert.equal(result.node, node);
     assert.deepEqual(calls, ["http://203.0.113.8:8085/nodes/Display/REST/actions"]);
   }));

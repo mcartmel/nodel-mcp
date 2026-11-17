@@ -17,9 +17,10 @@ Tool-specific success output schemas are not claimed because handlers return dom
 | `nodel.get_workflow_guidance` | read | preview | always | Return task-specific MCP workflow guidance that adapts to write, approval, lifecycle, and delete gates. |
 | `nodel.get_write_status` | read | preview | always | Summarize write-related gates, available write tools, and recommended next steps for the current sidecar configuration. |
 | `nodel.verify_write_plan` | read | preview | always | Read-only consistency check for a proposed or dry-run write plan before operator approval or apply. This is guidance only; write tools still enforce safety gates. |
-| `nodel.get_ui_guidelines` | read | preview | always | Return bundled legacy v1 XML/XSLT dashboard construction guidance and a component index. |
-| `nodel.get_ui_component_reference` | read | preview | always | Return filtered source-backed v1 XML component markup, classes, point rules, CSS defaults, and practical CSS recipes. |
-| `nodel.verify_ui_file` | read | preview | always | Validate a saved or proposed legacy v1 XML UI against XML/XSLT rules, live node points/schemas, assets, and detected Frontend parser behavior. |
+| `nodel.get_ui_guidelines` | read | preview | always | Return v1 XML or v2 HTML UI guidance. No-argument calls return the bundled v1 guide; node-aware calls may make bounded read-only requests to that target. |
+| `nodel.get_ui_component_reference` | read | preview | always | Return a bounded v1 XML or v2 HTML component reference. No-argument calls retain the local v1 reference; node-aware calls may read target capabilities. |
+| `nodel.get_ui_capabilities` | read | preview | always | Read compact, advisory v2 contract and entry-asset evidence from a trusted target node. No remote code is executed and support does not imply browser verification. |
+| `nodel.verify_ui_file` | read | preview | always | Run advisory static/live-context checks for v1 XML or v2 HTML UI files. Omitted format/path retain the legacy XML default unless supplied content positively identifies v2; explicit auto remains conservative. This does not execute a browser or gate file writes. |
 | `nodel.health` | read | preview | always | Return sidecar configuration and optionally verify Nodel reachability via GET /REST. |
 | `nodel.list_nodes` | read | preview | always | List all discoverable Nodel nodes via POST /REST/nodeURLs. |
 | `nodel.list_local_nodes` | read | preview | always | List only nodes hosted by the local Nodel runtime via GET /REST. |
@@ -56,14 +57,14 @@ Tool-specific success output schemas are not claimed because handlers return dom
 | `nodel.verify_recipe_script` | read | preview | always | Run heuristic static analysis of a Python recipe file or composed recipe load order for likely Python 2.5/Jython 2.5 and import/call-policy issues. It has false positives and false negatives, is not a complete parser, and requires runtime verification in Nodel. |
 | `nodel.propose_recipe_script` | proposal | experimental | always | Read the current main Python recipe script and propose a full replacement. Script saves use REST/script/save, reload the node, and require recipe validation plus post-save readiness checks. |
 | `nodel.propose_recipe_script_edit` | proposal | experimental | always | Read the main Python recipe script and apply exact text replacements in memory without modifying the node. |
-| `nodel.propose_node_file_text` | proposal | experimental | always | Read a supporting node file and propose a text save via REST/files/save. This rejects script.py, does not reload the node, and does not run recipe validation. |
-| `nodel.propose_node_file_base64` | proposal | experimental | always | Read a supporting node file and propose a base64/binary save via REST/files/save. This rejects script.py, does not reload the node, and does not run recipe validation. |
-| `nodel.propose_node_file_edit` | proposal | experimental | always | Read a supporting text file and apply exact text replacements in memory without modifying the node. This rejects script.py and does not run recipe validation. |
+| `nodel.propose_node_file_text` | proposal | experimental | always | Read a supporting node file and propose a text save via REST/files/save. This rejects script.py, does not reload the node, and does not run recipe validation. Recognized UI candidates receive bounded advisory feedback (uiFeedback=auto by default; skip/v1/v2 available). UI findings never gate writes or prove browser rendering; read-back verification remains separate. |
+| `nodel.propose_node_file_base64` | proposal | experimental | always | Read a supporting node file and propose a base64/binary save via REST/files/save. This rejects script.py, does not reload the node, and does not run recipe validation. Recognized UI candidates receive bounded advisory feedback (uiFeedback=auto by default; skip/v1/v2 available). UI findings never gate writes or prove browser rendering; read-back verification remains separate. |
+| `nodel.propose_node_file_edit` | proposal | experimental | always | Read a supporting text file and apply exact text replacements in memory without modifying the node. This rejects script.py and does not run recipe validation. Recognized UI candidates receive bounded advisory feedback (uiFeedback=auto by default; skip/v1/v2 available). UI findings never gate writes or prove browser rendering; read-back verification remains separate. |
 | `nodel.save_recipe_script` | write | experimental | writes | Save the main Python recipe script via REST/script/save. This reloads the node, blocks invalid recipes, and waits for post-save readiness by default. |
 | `nodel.apply_recipe_script_edit` | write | experimental | writes | Apply approved exact text replacements to the main Python recipe script via REST/script/save. This reloads the node and waits for readiness by default. |
-| `nodel.save_node_file_text` | write | experimental | writes | Save a supporting text file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation. |
-| `nodel.save_node_file_base64` | write | experimental | writes | Save a supporting binary/base64 file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation. |
-| `nodel.apply_node_file_edit` | write | experimental | writes | Apply exact text replacements to a supporting text file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation. |
+| `nodel.save_node_file_text` | write | experimental | writes | Save a supporting text file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation. Recognized UI candidates receive bounded advisory feedback (uiFeedback=auto by default; skip/v1/v2 available). UI findings never gate writes or prove browser rendering; read-back verification remains separate. |
+| `nodel.save_node_file_base64` | write | experimental | writes | Save a supporting binary/base64 file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation. Recognized UI candidates receive bounded advisory feedback (uiFeedback=auto by default; skip/v1/v2 available). UI findings never gate writes or prove browser rendering; read-back verification remains separate. |
+| `nodel.apply_node_file_edit` | write | experimental | writes | Apply exact text replacements to a supporting text file via REST/files/save. Rejects script.py, does not reload the node, and does not run recipe validation. Recognized UI candidates receive bounded advisory feedback (uiFeedback=auto by default; skip/v1/v2 available). UI findings never gate writes or prove browser rendering; read-back verification remains separate. |
 | `nodel.restart_node` | lifecycle | experimental | lifecycle | Restart a node. Requires NODEL_ENABLE_WRITES=true and NODEL_ENABLE_NODE_LIFECYCLE=true unless dryRun is true. |
 | `nodel.create_node` | lifecycle | experimental | lifecycle | Create a node on the local runtime, or on an explicit remote Nodel runtimeUrl. Requires lifecycle writes unless dryRun is true. |
 | `nodel.delete_node` | delete | experimental | deletes | Delete a node. Requires writes, lifecycle, delete gate, and exact name confirmation unless dryRun is true. |
@@ -176,7 +177,29 @@ Tool-specific success output schemas are not claimed because handlers return dom
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "properties": {},
+  "properties": {
+    "format": {
+      "default": "v1",
+      "type": "string",
+      "enum": [
+        "v1",
+        "v2",
+        "auto"
+      ]
+    },
+    "node": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "refresh": {
+      "default": false,
+      "type": "boolean"
+    }
+  },
   "additionalProperties": false
 }
 ```
@@ -188,6 +211,27 @@ Tool-specific success output schemas are not claimed because handlers return dom
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "format": {
+      "default": "v1",
+      "type": "string",
+      "enum": [
+        "v1",
+        "v2",
+        "auto"
+      ]
+    },
+    "node": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "refresh": {
+      "default": false,
+      "type": "boolean"
+    },
     "components": {
       "maxItems": 20,
       "type": "array",
@@ -197,15 +241,12 @@ Tool-specific success output schemas are not claimed because handlers return dom
       }
     },
     "includeMarkup": {
-      "default": true,
       "type": "boolean"
     },
     "includeCss": {
-      "default": true,
       "type": "boolean"
     },
     "includeExamples": {
-      "default": true,
       "type": "boolean"
     },
     "cssRecipes": {
@@ -215,8 +256,193 @@ Tool-specific success output schemas are not claimed because handlers return dom
         "type": "string",
         "minLength": 1
       }
+    },
+    "indexOffset": {
+      "default": 0,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "indexLimit": {
+      "default": 100,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    },
+    "stylesOffset": {
+      "default": 0,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "stylesLimit": {
+      "default": 100,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    },
+    "includeCore": {
+      "default": false,
+      "type": "boolean"
+    },
+    "attributesOffset": {
+      "default": 0,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "attributesLimit": {
+      "default": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    },
+    "commonOffset": {
+      "default": 0,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "commonLimit": {
+      "default": 40,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    },
+    "detailsOffset": {
+      "default": 0,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20
+    },
+    "detailsLimit": {
+      "default": 20,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
+    },
+    "field": {
+      "description": "V2-only focused supported-field retrieval, including nested array tails and exact text segments. Not an arbitrary JSON query.",
+      "type": "string",
+      "enum": [
+        "contract",
+        "components",
+        "component",
+        "attributes",
+        "commonAttributes",
+        "attribute.values",
+        "commonAttribute.values",
+        "actionBindings",
+        "actionBinding.phases",
+        "signalBindings",
+        "signalBinding.targets",
+        "signalTarget.aggregations",
+        "events",
+        "event.detailFields",
+        "aggregateSignalTargets",
+        "composition.requiredDirectChildren",
+        "composition.advisoryDirectChildren",
+        "styles.semanticClasses",
+        "styles.stateClasses",
+        "styles.tailwindUtilities"
+      ]
+    },
+    "attributeName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bindingAttribute": {
+      "type": "string",
+      "minLength": 1
+    },
+    "targetName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "eventName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fieldOffset": {
+      "default": 0,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 12000
+    },
+    "fieldLimit": {
+      "default": 20,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "textProperty": {
+      "description": "Select one supported string property independently (for example description or snippet). Use fieldLimit=1 for independent cursors; omit for scalar arrays. Not an arbitrary JSON path.",
+      "type": "string",
+      "enum": [
+        "name",
+        "description",
+        "snippet",
+        "packageVersion",
+        "valueType",
+        "syntax",
+        "defaultValue",
+        "defaultDescription",
+        "legacy",
+        "completion",
+        "consumption",
+        "lifecycle",
+        "consumer",
+        "numeric.unit",
+        "defaultSignalTarget",
+        "composition.requiredParent",
+        "attribute",
+        "defaultPhase",
+        "defaultTarget"
+      ]
+    },
+    "textOffset": {
+      "default": 0,
+      "description": "UTF-16 text offset within each selected supported string. Mid-surrogate-pair offsets are rejected. Follow each segment's nextOffset to reconstruct it exactly.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16000
+    },
+    "textLimit": {
+      "default": 512,
+      "description": "Target maximum UTF-16 units per scalar-safe string segment; limit 1 includes a whole surrogate pair (2 units) to ensure progress. The response budget may reduce it further.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 512
     }
   },
+  "additionalProperties": false
+}
+```
+
+### `nodel.get_ui_capabilities`
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "default": "content/index.html",
+      "type": "string",
+      "minLength": 1
+    },
+    "refresh": {
+      "default": false,
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "node"
+  ],
   "additionalProperties": false
 }
 ```
@@ -233,13 +459,24 @@ Tool-specific success output schemas are not claimed because handlers return dom
       "minLength": 1
     },
     "path": {
-      "default": "content/index.xml",
       "type": "string",
       "minLength": 1
     },
     "content": {
       "type": "string",
       "maxLength": 2000000
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "v1",
+        "v2"
+      ]
+    },
+    "refresh": {
+      "default": false,
+      "type": "boolean"
     },
     "includeLiveValues": {
       "default": false,
@@ -1668,6 +1905,17 @@ Tool-specific success output schemas are not claimed because handlers return dom
       "type": "string",
       "description": "Complete replacement text content."
     },
+    "uiFeedback": {
+      "default": "auto",
+      "description": "Advisory static UI analysis only; auto recognizes existing/proposed UI, skip avoids advisory reads, v1/v2 force a format. Never changes authorization or saved bytes.",
+      "type": "string",
+      "enum": [
+        "auto",
+        "skip",
+        "v1",
+        "v2"
+      ]
+    },
     "expectedHash": {
       "type": "string"
     },
@@ -1702,6 +1950,17 @@ Tool-specific success output schemas are not claimed because handlers return dom
     "contentBase64": {
       "type": "string",
       "description": "Complete replacement content encoded as standard base64."
+    },
+    "uiFeedback": {
+      "default": "auto",
+      "description": "Advisory static UI analysis only; auto recognizes existing/proposed UI, skip avoids advisory reads, v1/v2 force a format. Never changes authorization or saved bytes.",
+      "type": "string",
+      "enum": [
+        "auto",
+        "skip",
+        "v1",
+        "v2"
+      ]
     },
     "expectedHash": {
       "type": "string"
@@ -1758,6 +2017,17 @@ Tool-specific success output schemas are not claimed because handlers return dom
         ],
         "additionalProperties": false
       }
+    },
+    "uiFeedback": {
+      "default": "auto",
+      "description": "Advisory static UI analysis only; auto recognizes existing/proposed UI, skip avoids advisory reads, v1/v2 force a format. Never changes authorization or saved bytes.",
+      "type": "string",
+      "enum": [
+        "auto",
+        "skip",
+        "v1",
+        "v2"
+      ]
     },
     "expectedHash": {
       "type": "string"
@@ -1913,6 +2183,17 @@ Tool-specific success output schemas are not claimed because handlers return dom
       "type": "string",
       "description": "Complete replacement text content."
     },
+    "uiFeedback": {
+      "default": "auto",
+      "description": "Advisory static UI analysis only; auto recognizes existing/proposed UI, skip avoids advisory reads, v1/v2 force a format. Never changes authorization or saved bytes.",
+      "type": "string",
+      "enum": [
+        "auto",
+        "skip",
+        "v1",
+        "v2"
+      ]
+    },
     "expectedHash": {
       "type": "string"
     },
@@ -1954,6 +2235,17 @@ Tool-specific success output schemas are not claimed because handlers return dom
     "contentBase64": {
       "type": "string",
       "description": "Complete replacement content encoded as standard base64."
+    },
+    "uiFeedback": {
+      "default": "auto",
+      "description": "Advisory static UI analysis only; auto recognizes existing/proposed UI, skip avoids advisory reads, v1/v2 force a format. Never changes authorization or saved bytes.",
+      "type": "string",
+      "enum": [
+        "auto",
+        "skip",
+        "v1",
+        "v2"
+      ]
     },
     "expectedHash": {
       "type": "string"
@@ -2017,6 +2309,17 @@ Tool-specific success output schemas are not claimed because handlers return dom
         ],
         "additionalProperties": false
       }
+    },
+    "uiFeedback": {
+      "default": "auto",
+      "description": "Advisory static UI analysis only; auto recognizes existing/proposed UI, skip avoids advisory reads, v1/v2 force a format. Never changes authorization or saved bytes.",
+      "type": "string",
+      "enum": [
+        "auto",
+        "skip",
+        "v1",
+        "v2"
+      ]
     },
     "expectedHash": {
       "type": "string"

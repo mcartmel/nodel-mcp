@@ -61,7 +61,49 @@ export type NodelConsoleResponse = string | unknown[] | Record<string, unknown>;
 
 export type NodelHttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
-type NodeRequestBase = {
+/** Opt-in bounds for read-only enrichment. deadlineMs is an absolute Date.now() deadline. */
+export type NodeReadOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  deadlineMs?: number;
+  maxResponseBytes?: number;
+};
+
+export type StaticAsset = "contract" | "script" | "stylesheet";
+export type StaticAssetReadOptions = Omit<NodeReadOptions, "maxResponseBytes">;
+export type ResolvedStaticAssetRequest = {
+  node: ResolvedNode;
+  artifact: StaticAsset;
+  url: string;
+  /** Effective aggregate deadline, including the client's configured lower request timeout. */
+  deadlineMs?: number;
+};
+export type StaticAssetReadResult = ResolvedStaticAssetRequest & {
+  outcome:
+    | "observed"
+    | "http_error"
+    | "unexpected_content"
+    | "too_large"
+    | "timeout"
+    | "aborted"
+    | "redirect_rejected"
+    | "network_error";
+  status?: number;
+  mimeType?: string;
+  finalUrl: string;
+  retrievedAt: string;
+  durationMs: number;
+  bytesRead: number;
+  bodyComplete: boolean;
+  /** Only MIME-qualified successful content; never an HTTP error/login response body. */
+  content?: string;
+  /** SHA-256 of the exact fully-read contract bytes, before UTF-8 decoding. */
+  contentSha256?: string;
+  /** JS/CSS evidence only. This is a bounded sample, never executed or imported. */
+  sample?: string;
+};
+
+type NodeRequestBase = NodeReadOptions & {
   method?: NodelHttpMethod;
   headers?: Record<string, string>;
   body?: unknown;

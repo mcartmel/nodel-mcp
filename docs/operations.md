@@ -26,6 +26,131 @@ NODEL_ENABLE_DELETES=false
 - Keep `MCP_BIND_ADDRESS=127.0.0.1` for loopback-only operation.
 - Use low-noise log output during observation.
 
+### Read-only UI inspection and authoring advice
+
+For existing XML/HTML pages, inspect the saved file before selecting a starter.
+Use `nodel.get_ui_guidelines(format=auto,node=...,path=...)`, then the matching
+`nodel.get_ui_component_reference` and current node actions/signals/schemas.
+Incomplete or mixed recognition does not select a format. Saved format and
+deployment support are separate observations; a readable v2 page on an unsupported
+host is still v2, with explicitly unverified bundled advice. A requested new HTML
+path returning HTTP 404 permits a conditional new-page recommendation only, not
+an automatic write. Missing XML paths stay v1 and non-UI paths are not offered
+HTML starters. Authentication/server failures do not imply file absence.
+Explicit v2 references use the path as page context without a saved-file read;
+only auto selection needs saved-file recognition.
+
+Node-aware guidance/reference calls share one trusted target and capability
+observation across selection/rendering, with a cancellable 10-second aggregate
+deadline (or lower configured request timeout). Capability cache entries are
+target/artifact-scoped: success TTL 60 seconds, negative/error TTL 10 seconds,
+64 entries and 16 MiB cached contract budget. Refresh re-resolves before observing;
+it does not probe twice. Remote code is never executed. Contract and candidate
+reads are bounded to 2 MiB; JS/CSS probes sample at most 4 KiB. These budgets are
+internal constants, not new environment settings.
+
+V2 references default to a filtered index, not full catalogue definitions. Exact
+components include shared common attributes once; hidden/internal entries are
+not ordinary recommendations. Serialized reference text is capped at 64 KiB,
+including styles/details/provenance. Inspect explicit truncation and per-page
+`offset`, actual `limit`/`returned`, `requestedLimit`, `total`, `hasMore` and
+`nextOffset`. Large component overviews retain their identity and return
+`field_selection_required` with retrievable fields instead of empty details with
+a repeated cursor. Use attribute/common/style/index/detail paging for ordinary
+previews, or `field` for complete supported metadata. Focused fields include
+component scalars, attribute/common enum values, action phases, signal targets
+and aggregations, composition children, events/detail fields and style metadata.
+Use one exact component plus the applicable `attributeName`, `bindingAttribute`,
+`targetName` or `eventName`; page items with `fieldOffset/fieldLimit`. Long names,
+descriptions, syntax and snippets are exact text segments in field mode: follow
+each segment's `nextOffset` with `textOffset/textLimit` (UTF-16 code units) and
+concatenate `text` without adding ellipses. The response may lower page/text
+limits to honor the 64 KiB budget; effective limits and forward cursors remain
+explicit. Snippets remain data, never code execution. Unknown additive contract
+fields are not echoed. A bundled fallback always says
+`contractSource=bundled`, `deploymentApplicable=false`, compatibility unverified;
+a bundled starter is never relabelled as the deployed contract.
+
+Omitting verifier format/path preserves legacy XML validation, including parse
+errors, unless supplied content positively identifies v2. Explicit auto does not
+classify unknown supplied text using an invented canonical XML filename. Saved
+no-argument calls still use `content/index.xml`, and explicitly selecting that
+canonical path retains XML validation even for malformed content.
+
+For both full replacements and exact text edits, propose with normal expected
+hash/approval controls, then read back the saved bytes. Advisory
+`nodel.verify_ui_file` and isolated browser qualification are separate from
+read-back verification. These tools do not install v2, delete XML, change host
+defaults, reload recipes or grant write authorization. Replacing a primary
+`content/index.html` may affect navigation/default selection.
+
+The isolated browser qualification verifies the runtime-served contract hash
+against the pinned authoring reference and records which runtime distribution
+was exercised. It does not independently verify that distribution's source
+commit/build revision; a matching contract hash alone is not full build
+provenance.
+
+Supporting-file text/base64 proposal/save and exact-edit proposal/apply accept
+`uiFeedback=auto|skip|v1|v2`, default `auto`. Automatic feedback recognizes actual
+UI structure in candidate/original pages, not arbitrary XML or unmarked HTML.
+Unrelated files retain their existing requests/results. `skip` reports explicit
+`not_run` for UI candidates without advisory network reads; v1/v2 forces only the
+analysis format. Neither option changes content normalization, authorization or
+approval hashes. Edit feedback uses the once-composed candidate even with
+`includeContent=false`; original evidence remains useful when markers disappear.
+
+Automatic analysis uses a 3-second aggregate deadline, 200 returned issues by
+default, and existing bounded/cancellable capability/context reads. UTF-8 decode
+failures and candidates above 2 MiB report `not_run` with the exact candidate-byte
+hash, never an encoding repair or write rejection. Dry-run/no-change results also
+include advice. Actual saves finish hash/approval gates, audit, mutation and byte
+read-back **under the existing lock**, release it, then attach advisory feedback
+using captured bytes. A second write need not wait for the first one's advice;
+cross-client writes are still not atomic. Advisory failures (including read-only
+policy failures) do not relabel successful saves, consume new approvals, change
+audit outcomes or hide pending read-back verification. Core policy/conflict,
+approval and mutation failures still propagate normally.
+
+If eligible HTML/XML original bytes cannot be strictly decoded, contain binary
+NULs, or exceed the analysis limit, a plain replacement is **not** proof of an
+unrelated file. Feedback retains exact original/candidate hashes and explicit
+`not_run`/original-classification-unavailable diagnostics (including `skip`),
+without advisory network reads. Ordinary `.txt` files in auto mode remain
+unaffected unless a UI format was explicitly selected.
+
+Edit composition uses the runtime's existing `Response.text()` semantics for
+UTF-8 replacement and repeated BOMs, independently of feedback selection. Raw
+source bytes are captured once for advisory evidence. The historical distinction
+between decoded-text edit hashes and the core raw-byte expected-hash gate remains;
+this can still produce a BOM-related expectedHash conflict. When another client
+changes a file between composition and the later core gate read,
+`uiFeedback.coverage.originalSha256` describes the composition source, while the
+core `currentHash` describes its later gate snapshot. Neither is a cross-client
+atomicity guarantee, and advice never causes recomposition or another mutation.
+
+Treat `uiFeedback.validation`, mutation `status` and read-back `verification` as
+independent results. Static errors do not gate supporting-file saves; static
+passes do not prove browser operation. `verify_write_plan.advisory` summarizes
+client-supplied counts/status as unverified and can explain a candidate-hash
+mismatch; it never adds UI findings to authorization errors. Apply always obtains
+fresh bounded advice under normal target-scoped cache policy instead of trusting
+a supplied validation result. No action calls, recipe reloads, host changes or
+deployment operations are introduced by this workflow.
+
+Node creation readiness is pinned to the authorized runtime that accepted the
+create request, including its URL prefix; a same-name node on the configured
+local runtime cannot verify a remote creation. The internal client factory checks
+runtime-origin and node-prefix policy before minting a frozen, instance-trusted
+node reference in the fixed `nodes/<Nodel-reduced-name>/` namespace. Routing shares
+Java's source-backed `Nodel.reduce` semantics: `--`/`//` comments end the name and
+parenthesized comments are skipped before continuing. Prefix policy still checks
+the original authorized display name, not a neighboring node or reduced alias.
+The reduced name is percent-encoded as one segment because NanoHTTPD decodes the
+whole URI before splitting it; encoding an original slash is not segment-safe.
+The factory does not
+accept caller-authored node URLs or grant trust to copied/forged objects. Normal
+creation lifecycle/write/approval gates and redirect policy are unchanged.
+
 ### Complete environment reference
 
 Every variable in `.env.example` is listed here. Empty defaults mean an empty

@@ -1,7 +1,9 @@
 import type { DiscoveredNode, NormalizedNode } from "../types.js";
+import { reduceNodelName } from "../../shared/nodelName.js";
 
 export type NodeUrlInput = { original: string; url: URL; pathSegment?: string; queryNode?: string };
 
+/** Approximate discovery search key only; never use this to synthesize a host route. */
 export function getVerySimpleName(name: string) {
   const prefix = /^(.+?)(?:\(| \(|$)/iu.exec(name)?.[1] ?? name;
   return prefix.replace(/[^\p{L}\p{N}]/giu, "");
@@ -43,7 +45,7 @@ export function remoteNodeBaseUrl(candidate: DiscoveredNode) {
   address.search = "";
   address.hash = "";
   if (!address.pathname.includes("/nodes/")) {
-    address.pathname = `/nodes/${encodeURIComponent(candidate.restPathSegment ?? getVerySimpleName(candidate.name))}/`;
+    address.pathname = `/nodes/${encodeURIComponent(candidate.restPathSegment ?? reduceNodelName(candidate.name))}/`;
   } else if (!address.pathname.endsWith("/")) {
     address.pathname += "/";
   }
@@ -106,7 +108,9 @@ export function safeResolutionInput(input: string) {
 
 function localScore(node: NormalizedNode, input: string) {
   const simple = getVerySimpleName(input);
-  if ([node.name, node.key, node.restPathSegment].includes(input) || node.restPathSegment === simple) return 100;
+  if (node.name === input) return 120;
+  if ([node.key, node.restPathSegment].includes(input)) return 110;
+  if (node.restPathSegment === simple) return 100;
   if ([node.name, node.key, node.restPathSegment].some((value) => sameText(value, input))) return 90;
   if (sameText(getVerySimpleName(node.name), simple)) return 80;
   if ([node.name, node.key, node.restPathSegment].some((value) => containsText(value, input))) return 50;

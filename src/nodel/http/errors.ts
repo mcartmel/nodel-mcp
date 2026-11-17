@@ -1,6 +1,13 @@
 const MAX_DIAGNOSTIC_LENGTH = 300;
 
-export type NodelErrorCode = "TIMEOUT" | "NETWORK" | "HTTP" | "INVALID_JSON" | "NOT_FOUND" | "REDIRECT";
+export type NodelErrorCode =
+  | "TIMEOUT"
+  | "NETWORK"
+  | "HTTP"
+  | "INVALID_JSON"
+  | "NOT_FOUND"
+  | "REDIRECT"
+  | "RESPONSE_TOO_LARGE";
 
 export class NodelTransportError extends Error {
   constructor(
@@ -65,6 +72,15 @@ export class NodelRedirectError extends NodelTransportError {
       diagnostic: sanitizeDiagnostic(diagnostic),
     });
     this.name = "NodelRedirectError";
+  }
+}
+
+export class NodelResponseTooLargeError extends NodelTransportError {
+  constructor(url: URL, limit: number) {
+    super("RESPONSE_TOO_LARGE", `Nodel response exceeded the ${limit}-byte read limit: ${safeUrl(url)}`, {
+      url: safeUrl(url),
+    });
+    this.name = "NodelResponseTooLargeError";
   }
 }
 

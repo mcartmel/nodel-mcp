@@ -30,6 +30,7 @@ import {
 } from "./operations.js";
 import { recipeWriteProposalHash, writeApprovalDetails } from "./plans.js";
 import { waitForNodeReadyAfterWrite } from "./readiness.js";
+import { fileUiFeedback, mayAnalyzeFileUi, type UiFeedbackSelection } from "./ui-advisory.js";
 
 export type TextEdit = { oldText: string; newText: string; replaceAll?: boolean };
 export type NormalizedRecipeScript = NormalizedContent & {
@@ -166,10 +167,13 @@ export async function proposeNodeFile(
   normalized: NormalizedContent,
   expectedHash?: string,
   detail?: string,
+  uiFeedback: UiFeedbackSelection = "auto",
 ) {
   const safePath = assertSupportingFilePath(path);
   const resolved = await nodelClient.resolveNode(node);
-  const current = await readOptionalNodeFileBytes(nodelClient, resolved, safePath);
+  const current = await withWriteLock(writeKey(resolved, `file:${safePath}`), () =>
+    readOptionalNodeFileBytes(nodelClient, resolved, safePath),
+  );
   const currentHash = current === undefined ? undefined : sha256(current);
   if (expectedHash && currentHash !== expectedHash)
     throw publicError(
@@ -195,6 +199,7 @@ export async function proposeNodeFile(
     approvalReady: true,
     approvalRequest: approvalRequest(config, { operation, target, proposalHash }),
     proposedContent: normalized.text,
+    ...(await fileUiFeedback(nodelClient, resolved, safePath, normalized.bytes, current, uiFeedback)),
     message: config.writesEnabled
       ? `No changes applied. Pass ${normalized.mode === "base64" ? "contentBase64" : "content"} and currentHash to the matching nodel.save_node_file_* tool after approval.`
       : "No changes applied. Enable writes and get approval before saving this supporting file.",
@@ -210,39 +215,57 @@ export async function proposeNodeFileEdit(
   expectedHash: string | undefined,
   detail: string | undefined,
   includeContent: boolean,
+  uiFeedback: UiFeedbackSelection = "auto",
 ) {
   const safePath = assertSupportingFilePath(path);
   const resolved = await nodelClient.resolveNode(node);
-  const current = await nodelClient.getNodeFileContents(resolved, safePath);
-  const currentHash = sha256(current);
-  if (expectedHash && currentHash !== expectedHash)
-    throw publicError("CONFLICT", `Supporting file expectedHash mismatch. Current hash is ${currentHash}.`);
-  const editResult = applyTextEdits(current, edits);
-  const normalized = normalizeTextContent(editResult.content);
-  const operation = "apply_node_file_edit";
-  const target = `${resolved.name}:${safePath}`;
-  const proposalHash = recipeWriteProposalHash(operation, target, currentHash, normalized.hash, safePath, {
-    operation,
-    edits: editResult.applied,
+  const captured = await withWriteLock(writeKey(resolved, `file:${safePath}`), async () => {
+    const { current, original } = await readFileEditSource(nodelClient, resolved, safePath, uiFeedback);
+    const currentHash = sha256(current);
+    if (expectedHash && currentHash !== expectedHash)
+      throw publicError("CONFLICT", `Supporting file expectedHash mismatch. Current hash is ${currentHash}.`);
+    const editResult = applyTextEdits(current, edits);
+    const normalized = normalizeTextContent(editResult.content);
+    const operation = "apply_node_file_edit";
+    const target = `${resolved.name}:${safePath}`;
+    const proposalHash = recipeWriteProposalHash(operation, target, currentHash, normalized.hash, safePath, {
+      operation,
+      edits: editResult.applied,
+    });
+    return {
+      normalized,
+      original,
+      result: {
+        operation,
+        node: resolved,
+        path: safePath,
+        detail,
+        currentHash,
+        nextHash: normalized.hash,
+        changed: currentHash !== normalized.hash,
+        edits: editResult.applied,
+        contentMode: normalized.mode,
+        byteLength: normalized.byteLength,
+        pathWarnings: recipePathWarnings(safePath),
+        approvalReady: true,
+        approvalRequest: approvalRequest(config, { operation, target, proposalHash }),
+        proposedContent: includeContent ? editResult.content : undefined,
+        message: config.writesEnabled
+          ? "No changes applied. Pass the same edits and currentHash to nodel.apply_node_file_edit after approval."
+          : "No changes applied. Enable writes and get approval before applying this supporting-file edit.",
+      },
+    };
   });
   return {
-    operation,
-    node: resolved,
-    path: safePath,
-    detail,
-    currentHash,
-    nextHash: normalized.hash,
-    changed: currentHash !== normalized.hash,
-    edits: editResult.applied,
-    contentMode: normalized.mode,
-    byteLength: normalized.byteLength,
-    pathWarnings: recipePathWarnings(safePath),
-    approvalReady: true,
-    approvalRequest: approvalRequest(config, { operation, target, proposalHash }),
-    proposedContent: includeContent ? editResult.content : undefined,
-    message: config.writesEnabled
-      ? "No changes applied. Pass the same edits and currentHash to nodel.apply_node_file_edit after approval."
-      : "No changes applied. Enable writes and get approval before applying this supporting-file edit.",
+    ...captured.result,
+    ...(await fileUiFeedback(
+      nodelClient,
+      resolved,
+      safePath,
+      captured.normalized.bytes,
+      captured.original,
+      uiFeedback,
+    )),
   };
 }
 
@@ -378,67 +401,106 @@ export async function saveNodeFile(
   extraPlan: Record<string, unknown> = {},
   approvalId?: string,
   alreadyLocked = false,
+  uiFeedback: UiFeedbackSelection = "auto",
 ) {
   path = assertSupportingFilePath(path);
   const resolved = typeof node === "string" ? await nodelClient.resolveNode(node) : node;
-  const save = async () => {
-    const current = await readOptionalNodeFileBytes(nodelClient, resolved, path);
-    const currentHash = current === undefined ? undefined : sha256(current);
-    if (expectedHash && currentHash !== expectedHash)
-      throw publicError(
-        "CONFLICT",
-        `Supporting file expectedHash mismatch. Current hash is ${currentHash ?? "<missing>"}.`,
-      );
-    const request = nodeFileSaveRequest(path, normalized.bytes);
-    const plan = {
-      operation: "save_node_file",
-      ...extraPlan,
-      node: resolved,
+  const save = () =>
+    saveNodeFileCore(
+      nodelClient,
+      config,
+      resolved,
       path,
-      contentMode: normalized.mode,
-      byteLength: normalized.byteLength,
-      restPath: request.restPath,
-      method: request.method,
-      currentHash,
-      nextHash: normalized.hash,
-      pathWarnings: recipePathWarnings(path),
+      normalized,
+      expectedHash,
       dryRun,
       reason,
-    };
-    const operation = typeof plan.operation === "string" ? plan.operation : "save_node_file";
-    const approval = writeApproval(config, operation, `${resolved.name}:${path}`, {
-      currentHash,
-      nextHash: normalized.hash,
-      path,
       extraPlan,
-    });
-    const planWithApproval = { ...plan, approvalRequest: approval.request };
-    if (currentHash === normalized.hash) return { ...planWithApproval, status: "no_change", changed: false };
-    if (dryRun) return { ...planWithApproval, status: "dry_run" };
-    assertWritesEnabled(config);
-    assertWriteApproved(config, approval.details, approvalId);
-    logger.info("Saving Nodel supporting file", { node: resolved.name, path, reason });
-    const audited = await auditedMutation(
-      config,
-      { operation, node: resolved.name, path, currentHash, nextHash: normalized.hash, reason },
-      () =>
-        nodelClient.nodeRequest(resolved, request.restPath, {
-          method: request.method,
-          headers: request.headers,
-          body: request.body,
-          responseMode: "json",
-        }),
+      approvalId,
     );
-    const verification = await verifySupportingFileReadBack(nodelClient, resolved, path, normalized.hash);
-    return {
+  const captured = await (alreadyLocked ? save() : withWriteLock(writeKey(resolved, `file:${path}`), save));
+  // Legacy callers that own an outer lock retain the raw core semantics. They
+  // must attach advice after releasing their lock; apply uses the core below.
+  return {
+    ...captured.result,
+    ...(alreadyLocked
+      ? {}
+      : await fileUiFeedback(nodelClient, resolved, path, normalized.bytes, captured.original, uiFeedback)),
+  };
+}
+
+/** No advisory work here: preserve hash -> gates -> audit -> save -> read-back. */
+async function saveNodeFileCore(
+  nodelClient: NodelClient,
+  config: AppConfig,
+  resolved: ResolvedNode,
+  path: string,
+  normalized: NormalizedContent,
+  expectedHash: string | undefined,
+  dryRun: boolean,
+  reason: string | undefined,
+  extraPlan: Record<string, unknown>,
+  approvalId: string | undefined,
+) {
+  const current = await readOptionalNodeFileBytes(nodelClient, resolved, path);
+  const currentHash = current === undefined ? undefined : sha256(current);
+  if (expectedHash && currentHash !== expectedHash)
+    throw publicError(
+      "CONFLICT",
+      `Supporting file expectedHash mismatch. Current hash is ${currentHash ?? "<missing>"}.`,
+    );
+  const request = nodeFileSaveRequest(path, normalized.bytes);
+  const plan = {
+    operation: "save_node_file",
+    ...extraPlan,
+    node: resolved,
+    path,
+    contentMode: normalized.mode,
+    byteLength: normalized.byteLength,
+    restPath: request.restPath,
+    method: request.method,
+    currentHash,
+    nextHash: normalized.hash,
+    pathWarnings: recipePathWarnings(path),
+    dryRun,
+    reason,
+  };
+  const operation = typeof plan.operation === "string" ? plan.operation : "save_node_file";
+  const approval = writeApproval(config, operation, `${resolved.name}:${path}`, {
+    currentHash,
+    nextHash: normalized.hash,
+    path,
+    extraPlan,
+  });
+  const planWithApproval = { ...plan, approvalRequest: approval.request };
+  if (currentHash === normalized.hash)
+    return { original: current, result: { ...planWithApproval, status: "no_change", changed: false } };
+  if (dryRun) return { original: current, result: { ...planWithApproval, status: "dry_run" } };
+  assertWritesEnabled(config);
+  assertWriteApproved(config, approval.details, approvalId);
+  logger.info("Saving Nodel supporting file", { node: resolved.name, path, reason });
+  const audited = await auditedMutation(
+    config,
+    { operation, node: resolved.name, path, currentHash, nextHash: normalized.hash, reason },
+    () =>
+      nodelClient.nodeRequest(resolved, request.restPath, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        responseMode: "json",
+      }),
+  );
+  const verification = await verifySupportingFileReadBack(nodelClient, resolved, path, normalized.hash);
+  return {
+    original: current,
+    result: {
       ...planWithApproval,
       status: verification.ok ? "succeeded_verified" : "succeeded_verification_pending",
       response: audited.result.response,
       verification,
       operationId: audited.operationId,
-    };
+    },
   };
-  return alreadyLocked ? save() : withWriteLock(writeKey(resolved, `file:${path}`), save);
 }
 
 export async function applyNodeFileEdit(
@@ -451,29 +513,62 @@ export async function applyNodeFileEdit(
   dryRun: boolean,
   reason?: string,
   approvalId?: string,
+  uiFeedback: UiFeedbackSelection = "auto",
 ) {
   const safePath = assertSupportingFilePath(path);
   const resolved = await nodelClient.resolveNode(node);
-  return withWriteLock(writeKey(resolved, `file:${safePath}`), async () => {
-    const current = await nodelClient.getNodeFileContents(resolved, safePath);
+  const captured = await withWriteLock(writeKey(resolved, `file:${safePath}`), async () => {
+    const { current, original } = await readFileEditSource(nodelClient, resolved, safePath, uiFeedback);
     const currentHash = sha256(current);
     if (expectedHash && currentHash !== expectedHash)
       throw publicError("CONFLICT", `Supporting file expectedHash mismatch. Current hash is ${currentHash}.`);
     const editResult = applyTextEdits(current, edits);
-    return saveNodeFile(
+    const normalized = normalizeTextContent(editResult.content);
+    const saved = await saveNodeFileCore(
       nodelClient,
       config,
       resolved,
       safePath,
-      normalizeTextContent(editResult.content),
+      normalized,
       expectedHash,
       dryRun,
       reason,
       { operation: "apply_node_file_edit", edits: editResult.applied },
       approvalId,
-      true,
     );
+    // The later core read is still the authorization/hash-gate snapshot. Advice
+    // must instead describe the exact earlier source used to compose this edit;
+    // another client can change the file between those reads even under our lock.
+    return { ...saved, normalized, original };
   });
+  return {
+    ...captured.result,
+    ...(await fileUiFeedback(
+      nodelClient,
+      resolved,
+      safePath,
+      captured.normalized.bytes,
+      captured.original,
+      uiFeedback,
+    )),
+  };
+}
+
+async function readFileEditSource(
+  client: NodelClient,
+  node: ResolvedNode,
+  path: string,
+  selection: UiFeedbackSelection,
+) {
+  if (!mayAnalyzeFileUi(path, selection))
+    return { current: await client.getNodeFileContents(node, path), original: undefined };
+  const original = await client.getNodeFileBytes(node, path);
+  // Use the actual legacy Response.text() pipeline, not an approximate UTF-8
+  // decoder: Node/Undici can handle repeated leading BOMs differently from
+  // TextDecoder. One network read supplies both exact source evidence and the
+  // same composition text as getNodeFileContents, independently of selection.
+  const current = await new Response(new Uint8Array(original)).text();
+  return { current, original };
 }
 
 export async function restartNode(
@@ -518,7 +613,10 @@ export async function restartNode(
 }
 
 export async function createNode(
-  nodelClient: Pick<NodelClient, "assertRuntimeUrlAllowed" | "runtimeRequest" | "nodeRequest">,
+  nodelClient: Pick<
+    NodelClient,
+    "assertRuntimeUrlAllowed" | "runtimeRequest" | "nodeRequest" | "createRuntimeNodeReference"
+  >,
   config: AppConfig,
   name: string,
   runtimeUrl: string | undefined,
@@ -608,18 +706,19 @@ export async function deleteNode(
 }
 
 async function verifyCreatedNode(
-  nodelClient: Pick<NodelClient, "nodeRequest">,
+  nodelClient: Pick<NodelClient, "nodeRequest" | "createRuntimeNodeReference">,
   config: AppConfig,
   name: string,
   runtimeUrl: string,
 ) {
   const deadline = Date.now() + (config.postWriteReadyTimeoutSeconds ?? 20) * 1000;
-  const node = createdNodeReference(runtimeUrl, name);
+  let node: ResolvedNode | undefined;
   let attempts = 0;
   let lastError: string | undefined;
   while (Date.now() <= deadline) {
     attempts += 1;
     try {
+      node ??= nodelClient.createRuntimeNodeReference(runtimeUrl, name);
       await nodelClient.nodeRequest(node, "actions", { responseMode: "json" });
       return {
         attempted: true,
@@ -645,20 +744,6 @@ async function verifyCreatedNode(
   };
 }
 
-function createdNodeReference(runtimeUrl: string, name: string): ResolvedNode {
-  const nodeBaseUrl = new URL(`nodes/${encodeURIComponent(name)}/`, `${runtimeUrl}/`).toString();
-  return {
-    input: name,
-    scope: "remote",
-    name,
-    address: nodeBaseUrl,
-    url: nodeBaseUrl,
-    nodeBaseUrl,
-    allowed: true,
-    resolutionSource: "discovery",
-  };
-}
-
 export async function verifyDeletedNode(
   nodelClient: Pick<NodelClient, "resolveNode"> & Partial<Pick<NodelClient, "resolveNodeForDeletion">>,
   config: AppConfig,
@@ -670,7 +755,8 @@ export async function verifyDeletedNode(
   while (Date.now() <= deadline) {
     attempts += 1;
     try {
-      await (nodelClient.resolveNodeForDeletion ?? nodelClient.resolveNode)(name);
+      if (nodelClient.resolveNodeForDeletion) await nodelClient.resolveNodeForDeletion(name);
+      else await nodelClient.resolveNode(name);
     } catch (error) {
       if (error instanceof NodeResolutionNotFoundError)
         return {

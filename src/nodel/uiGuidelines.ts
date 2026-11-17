@@ -7,6 +7,19 @@ import {
   decodeV1DataAttribute,
   getV1ClassPropagationSummary,
 } from "./v1UiCatalog.js";
+import { V2_GUIDANCE } from "./v2/guidance.js";
+
+export const BUNDLED_UI_CONTRACT_PROVENANCE = {
+  contractSource: "bundled",
+  schemaVersion: V2_GUIDANCE.source.schemaVersion,
+  packageVersion: V2_GUIDANCE.source.packageVersion,
+  contentHash: V2_GUIDANCE.source.sha256,
+  repository: V2_GUIDANCE.source.repository,
+  repositoryRevision: V2_GUIDANCE.source.revision,
+  license: V2_GUIDANCE.source.license,
+  compatibility: "unverified",
+  deploymentApplicable: false,
+} as const;
 
 const CLASS_PROPAGATION = getV1ClassPropagationSummary();
 
@@ -209,5 +222,46 @@ export function v1XmlUiGuidance() {
       "Current installed runtime behavior and existing local dashboard style take precedence over bundled guidance when they disagree.",
       "The standard Frontend parser is a recipe-layer convention, not the browser XSLT runtime; verify live registered points and schemas separately.",
     ],
+  };
+}
+
+/** Bundled offline v2 authoring guidance; capability evidence remains target-scoped and optional. */
+export function v2HtmlUiGuidance(capability?: unknown, path = V2_GUIDANCE.recommendedPath) {
+  const observedContract =
+    capability && typeof capability === "object" && "contract" in capability
+      ? (capability.contract as { contractSource?: string })
+      : undefined;
+  const contract = observedContract ?? BUNDLED_UI_CONTRACT_PROVENANCE;
+  return {
+    format: "v2_html_custom_elements",
+    scope: "advisory_authoring",
+    title: "Nodel v2 HTML UI Authoring Guidelines",
+    defaultPath: V2_GUIDANCE.recommendedPath,
+    path,
+    starter: V2_GUIDANCE.starter,
+    starterProvenance: V2_GUIDANCE.starterProvenance,
+    bundledContractProvenance: BUNDLED_UI_CONTRACT_PROVENANCE,
+    contract,
+    deployedContract: observedContract?.contractSource === "deployed" ? observedContract : undefined,
+    capability,
+    guidelines: [
+      "## Minimal starter and safe defaults",
+      "Use the bundled Quickstart starter as a minimal root-level content/index.html baseline. Keep the supplied fixed dark theme, stable v2 stylesheet and module references, nodel-app shell, and avoid unlisted attributes.",
+      ...V2_GUIDANCE.defaultAttributes,
+      "## Bindings and layout",
+      ...V2_GUIDANCE.layout,
+      ...V2_GUIDANCE.bindings,
+      "## Styling, confirmation, and templates",
+      ...V2_GUIDANCE.styling,
+      ...V2_GUIDANCE.confirmations,
+      ...V2_GUIDANCE.templates,
+      "## Workflow and impact",
+      "Inspect the existing page and target actions/signals, select matching format guidance, then propose/edit and use the normal approval/save flow. UI advice is not write authorization, and read-back does not establish browser correctness.",
+      "Replacing content/index.html can change primary navigation/default selection. This tool does not delete XML, change host defaults, or migrate formats.",
+      "For nested pages verify relative REST/ API URLs as well as stylesheet/module asset URLs; root-level relative references are not automatically portable.",
+    ].join("\n"),
+    limitations: V2_GUIDANCE.limitations,
+    advisory: true,
+    browserTested: false,
   };
 }
