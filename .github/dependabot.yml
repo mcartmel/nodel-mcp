@@ -5,8 +5,32 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      production-security-updates:
+        applies-to: security-updates
+        dependency-type: production
+        patterns:
+          - "*"
+      eslint-toolchain:
+        applies-to: version-updates
+        patterns:
+          - "@eslint/js"
+          - "@typescript-eslint/*"
+          - eslint
+          - typescript-eslint
+    ignore:
+      - dependency-name: typescript
+        versions:
+          - "7.x"
+        update-types:
+          - version-update:semver-major
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
