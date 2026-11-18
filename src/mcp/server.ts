@@ -16,7 +16,7 @@ import { stateStore, type StateStore } from "../state/store.js";
 import { registerWorkflowPrompts } from "./prompts.js";
 import { collectToolSpecs } from "./registry/toolRegistry.js";
 import { StableMcpServer } from "./sdkBoundary.js";
-import type { ElicitInput } from "./tools/approvals.js";
+import { ElicitationUnavailableError, type ElicitInput } from "./tools/approvals.js";
 import packageJson from "../../package.json" with { type: "json" };
 
 type ActiveMcpRequest = {
@@ -60,7 +60,13 @@ export type HttpServerRuntime = NodeHttpServer & {
 function createMcpServer(config: AppConfig, nodelClient: NodelClient) {
   const server = new StableMcpServer({ name: "nodel-ai", version: packageJson.version });
   registerWorkflowPrompts(server, config);
-  const elicitInput: ElicitInput = server.server.elicitInput.bind(server.server);
+  const elicitInput: ElicitInput = async (params, options) => {
+    // Capabilities are negotiated after registration. Only known absence permits fallback;
+    // SDK/protocol/transport failures from an advertised capability must fail closed.
+    if (!getSupportedElicitationModes(server.server.getClientCapabilities()?.elicitation).supportsFormMode)
+      throw new ElicitationUnavailableError();
+    return server.server.elicitInput(params, options);
+  };
   for (const spec of collectToolSpecs(config, nodelClient, elicitInput)) {
     server.registerTool(
       spec.name,
@@ -275,7 +281,6 @@ export function createHttpApp(config: AppConfig, options: HttpAppOptions = {}): 
         config.writesEnabled && config.writeApprovalRequired && initialization.supportsFormMode;
       if (retainsClientCapabilities && sessions.size + reservedStatefulSessions >= maxStatefulSessions)
         return sendError(req, res, 503, "session_capacity_reached");
-      if (retainsClientCapabilities) reservedStatefulSessions += 1;
       const server = createMcpServer(config, nodelClient);
       const sessionPublisher: { publish?: (sessionId: string) => void } = {};
       const transport = new StreamableHTTPServerTransport({
@@ -284,6 +289,9 @@ export function createHttpApp(config: AppConfig, options: HttpAppOptions = {}): 
           ? (sessionId) => sessionPublisher.publish?.(sessionId)
           : undefined,
       });
+      // Construction is synchronous: reserve only after it succeeds, so an SDK
+      // compatibility/constructor failure cannot consume session capacity.
+      if (retainsClientCapabilities) reservedStatefulSessions += 1;
       const activeEntry: ActiveMcpRequest = {
         server,
         transport,
@@ -386,6 +394,10 @@ export async function startHttpServer(
   const store = options.store ?? stateStore(config.stateDir);
   store.acquireStartupLock();
   try {
+    // Exercise the actual pinned SDK boundary before binding any HTTP endpoint.
+    // Keep the per-instance check as well: later construction must still fail closed.
+    const boundaryProbe = new StableMcpServer({ name: "nodel-ai", version: packageJson.version });
+    await boundaryProbe.close();
     const runtime = createHttpApp(config, options);
     const server = createServer(runtime.app) as HttpServerRuntime;
     const sockets = new Set<Socket>();

@@ -23,9 +23,16 @@ Treat the Nodel runtime, its network discovery, state directory, MCP client,
 and any configured bearer token as trusted deployment inputs. Do not expose
 the service directly to an untrusted network.
 
-Write approval is a workflow guardrail, not independent authorization.
-`nodel.approve_write` is the documented fallback when MCP elicitation is not
-available and depends on client/operator discipline.
+Write approval is a workflow guardrail, not independent authorization. Native
+`nodel.request_write_approval` uses a boolean MCP form when the client advertises
+form elicitation, but client software controls rendering and support is not
+universal. The typed `nodel.approve_write` path is compatibility-only for known
+unavailability or explicit fallback. A rejected or failed native request must
+not trigger fallback, but this is not durable denial enforcement: the manual
+tool remains callable and neither path independently authenticates a human.
+Assistant-supplied summaries are unverified context, not server-verified
+proposal content. See [the security model](docs/security-model.md#approval-semantics)
+for outcome and trust details.
 
 The sidecar permits one process per state directory. Approval updates and audit
 append/rotation are synchronous within that process, so they do not interleave;

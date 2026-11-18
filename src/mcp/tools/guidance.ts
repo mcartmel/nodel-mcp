@@ -135,9 +135,11 @@ export function workflowGuidance(config: AppConfig, task: GuidanceTask, includeE
   } else if (config.writeApprovalRequired) {
     workflow.push("Review the proposal or dry-run payload, including hashes, warnings, and approvalRequest.");
     workflow.push(
-      "Ask the operator to approve the exact approvalRequest.confirmText using nodel.request_write_approval where the client supports elicitation, or nodel.approve_write as manual fallback. The fallback is a workflow guardrail, not an authentication boundary.",
+      "Call nodel.request_write_approval with the exact operation, target, proposalHash, and confirmText from approvalRequest; optionally provide a concise summary of changes and consequences (including reloads/restarts or overwrites), without secrets. Native elicitation is itself the user confirmation step: do not ask for duplicate chat approval first. The client controls rendering and must support form elicitation.",
     );
-    workflow.push("Pass the returned approvalId to the matching apply tool.");
+    workflow.push(
+      "Native branch: apply only when resultOk=true, outcome=approved, and approvalId is present. If and only if fallbackAvailable=true, obtain explicit operator approval of the exact confirmText before calling nodel.approve_write; apply only when that manual tool returns ok=true and approvalId. Stop without applying after native denial, cancellation, invalid response, or failure; never retry or fall back after those outcomes. Manual approval is compatibility workflow, not authentication.",
+    );
   } else {
     workflow.push(
       "Review the proposal or dry-run payload, including hashes and warnings. Approval ids are not required by current configuration.",
@@ -147,8 +149,10 @@ export function workflowGuidance(config: AppConfig, task: GuidanceTask, includeE
     );
   }
 
-  workflow.push(...base.applySteps);
-  workflow.push(...base.verifySteps);
+  if (config.writesEnabled) {
+    workflow.push(...base.applySteps);
+    workflow.push(...base.verifySteps);
+  }
 
   return {
     task,
@@ -158,7 +162,7 @@ export function workflowGuidance(config: AppConfig, task: GuidanceTask, includeE
     recommendedWorkflow: workflow,
     warnings: taskWarnings(config, task),
     approval,
-    examples: includeExamples ? taskExamples(config, task) : undefined,
+    examples: includeExamples && config.writesEnabled ? taskExamples(config, task) : undefined,
   };
 }
 
@@ -172,7 +176,7 @@ export function writeStatus(config: AppConfig) {
     recommendedNextStep: !config.writesEnabled
       ? "Use read/proposal tools only, or enable NODEL_ENABLE_WRITES for approved maintenance."
       : config.writeApprovalRequired
-        ? "Use proposal or dryRun tools, get explicit operator approval with nodel.request_write_approval or fallback nodel.approve_write, then apply and verify."
+        ? "Use proposal or dryRun tools and review the detailed proposal. Call nodel.request_write_approval first. Native success requires resultOk=true and outcome=approved before applying with its approvalId. Only when fallbackAvailable=true, obtain explicit operator approval of the exact confirmText before calling nodel.approve_write; apply only after its success result has ok=true and approvalId. Never fall back after denial or failure."
         : "Use proposal or dryRun tools, apply without approvalId, then verify read-back hashes and runtime state.",
   };
 }
@@ -192,7 +196,7 @@ export function writeApprovalInstructions(config: AppConfig, operation?: string)
       available: true,
       operation,
       message:
-        "Write approval ids are not required by current sidecar configuration. Still use proposals/dry-runs, expected hashes, and verification reads.",
+        "Write approval ids are not required by current sidecar configuration; proposals report approvalRequest.required=false. Skip approval tools in the normal workflow. If nodel.request_write_approval is unnecessarily called, it returns outcome=not_required. Still use proposals/dry-runs, expected hashes, and verification reads; do not invent an approval step.",
     };
   }
   return {
@@ -200,7 +204,7 @@ export function writeApprovalInstructions(config: AppConfig, operation?: string)
     available: true,
     operation,
     message:
-      "After explicit operator approval of the exact confirmText, prefer nodel.request_write_approval where the client supports elicitation, or use fallback nodel.approve_write. The fallback depends on client/operator discipline and is not an authentication boundary. Pass the returned approvalId to the matching write tool.",
+      "Review and verify the detailed proposal first. If approval is required, call nodel.request_write_approval with its exact operation, target, proposalHash, and confirmText; an optional concise summary is unverified context and must contain no secrets. Native elicitation is itself the user confirmation step; do not ask for duplicate chat approval. Apply its approvalId only when resultOk=true and outcome=approved. Only if fallbackAvailable=true, obtain explicit operator approval of the exact confirmText before calling nodel.approve_write; apply that ID only when the manual tool returns ok=true and an approvalId. Stop after decline, cancellation, invalid response, or failure; never retry or fall back. If native approval is not required by configuration, do not request it. The client controls native rendering and must support form elicitation. Manual approval is a workflow guardrail, not authentication.",
   };
 }
 
@@ -225,7 +229,7 @@ export function verifyWritePlan(
     !readString(plan.approvalId)
   ) {
     warnings.push(
-      "Approval is required for writes; ensure the matching proposal includes approvalRequest and obtain approvalId before apply.",
+      "Approval is required for writes; ensure the matching proposal includes approvalRequest. Prefer nodel.request_write_approval and use its approvalId only when resultOk=true and outcome=approved. Only if fallbackAvailable=true, obtain explicit operator approval of the exact confirmText before calling nodel.approve_write; use that manual approvalId only when the tool returns ok=true and approvalId. Never fall back after denial or failure.",
     );
   }
 
@@ -310,7 +314,7 @@ export function verifyWritePlan(
       errors.length > 0
         ? "Fix validation errors before requesting approval or applying."
         : config.writeApprovalRequired && config.writesEnabled
-          ? "Get operator approval with nodel.request_write_approval or fallback nodel.approve_write before applying."
+          ? "Review the proposal. Prefer nodel.request_write_approval and apply its approvalId only when resultOk=true and outcome=approved. Only if fallbackAvailable=true, obtain explicit operator approval of the exact confirmText before calling nodel.approve_write; apply only after that tool returns ok=true and approvalId. Never fall back after denial or failure."
           : "Apply with the matching tool, then verify read-back state.",
   };
 }
@@ -452,9 +456,12 @@ function baseWorkflow(task: GuidanceTask) {
   if (task === "diagnose") {
     return {
       ...metadata,
-      readSteps: ["Describe the node and inspect console/activity before changing anything."],
+      readSteps: [
+        "Describe the node and inspect console/activity before changing anything.",
+        "Use nodel.verify_node_ready to summarize probe results and current-runtime console errors.",
+      ],
       applySteps: ["Prefer diagnosis and proposals before any write."],
-      verifySteps: ["Use nodel.verify_node_ready to summarize probe results and current-runtime console errors."],
+      verifySteps: [],
     };
   }
   return {
@@ -520,7 +527,9 @@ function taskExamples(config: AppConfig, task: GuidanceTask) {
     return [
       {
         approvalReady: true,
-        next: config.writeApprovalRequired ? "approve_write -> save_recipe_script" : "save_recipe_script",
+        next: config.writeApprovalRequired
+          ? "request_write_approval (outcome=approved) -> save_recipe_script"
+          : "save_recipe_script",
       },
     ];
   }
@@ -529,7 +538,7 @@ function taskExamples(config: AppConfig, task: GuidanceTask) {
       {
         approvalReady: true,
         next: config.writeApprovalRequired
-          ? "approve_write -> save_node_file_text/base64"
+          ? "request_write_approval (outcome=approved) -> save_node_file_text/base64"
           : "save_node_file_text/base64",
       },
     ];

@@ -55,9 +55,37 @@ Operational guidance:
 
 Approval is an operational control, not an external authorization layer.
 
-- `nodel.approve_write` is documented as a fallback when MCP elicitation is not
-  available.
-- Fallback approval depends on operator discipline and client UX.
+- Native `nodel.request_write_approval` uses MCP form elicitation with an
+  unchecked-by-default boolean decision when the client advertises form support.
+  The client controls the rendering; this does not guarantee a particular UI or
+  universal client support. It is the confirmation step, not an additional
+  confirmation after a chat prompt.
+- The optional assistant-supplied summary is unverified context and is not bound
+  into the proposal hash. Review the detailed proposal identity and consequences
+  separately; do not include secrets in the summary.
+- Typed `nodel.approve_write` remains a compatibility path for explicit
+  `fallbackOnly` or known unavailable form elicitation. Only if
+  `fallbackAvailable=true`, obtain explicit operator approval of the exact
+  `confirmText` before calling `nodel.approve_write`. A decline, cancellation,
+  invalid response, or failure is terminal for that request: do not recommend
+  fallback or automatic retry. This is workflow guidance, not durable denial
+  enforcement; the manual tool remains callable and cannot establish that a
+  human approved anything.
+- `ok` is the tool-envelope success flag and `resultOk` is the domain result
+  flag. For native approval, inspect both `resultOk=true` and
+  `outcome=approved` before applying its approval ID. An unavailable native
+  elicitor is a non-error result with `ok=true`, `resultOk=false`,
+  `outcome=unavailable`, and `fallbackAvailable=true`; manual approval then
+  returns its approval ID on success with `ok=true` (it does not return native
+  `outcome=approved`). Other non-error native outcomes include
+  `fallbackAvailable=false`; fallback instructions are included only when the
+  value is true. When approval is disabled, proposals report
+  `approvalRequest.required=false`; skip approval tools in the normal workflow.
+  If `nodel.request_write_approval` is unnecessarily called, the helper returns
+  `outcome=not_required` without prompting or issuing an approval ID. Callers
+  must not invent an approval step.
+- Native form confirmation is distinct from MCP client's tool-permission
+  dialogs, which are client-controlled and may be separate.
 - Approval IDs are short-lived, single-use, and operation-scoped.
 - In-process keyed locks serialize writes, expected hashes provide optimistic
   concurrency, and readback reports named verification statuses. These controls

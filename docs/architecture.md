@@ -84,6 +84,16 @@ Backups may include sensitive values and must be treated as secrets.
 - They do not represent an external authorization authority.
 - They do not alter file/OS permissions or OS-level process controls.
 - They depend on out-of-band trust in the configured operator and deployment.
+- `nodel.request_write_approval` uses an unchecked-by-default boolean form when
+  the client advertises form elicitation. The client controls rendering; this is
+  not the client's separate tool-permission dialog and does not guarantee a
+  particular UI or universal support.
+- The typed `nodel.approve_write` tool is a compatibility path for explicit
+  `fallbackOnly` or known unavailable form elicitation, not a response to a
+  declined, cancelled, invalid, or failed native request. This guidance is not
+  durable denial enforcement, and the manual tool remains callable.
+- Optional assistant-supplied summaries are unverified context, not proposal
+  content verified by the server or part of the proposal hash.
 
 For the definitive statement, see
 [`SUPPORT.md`](../SUPPORT.md) and [`SECURITY.md`](../SECURITY.md).

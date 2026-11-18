@@ -23,13 +23,27 @@ test("promptText reflects disabled writes", () => {
 
   assert.match(text, /Mode: read_only/u);
   assert.match(text, /Writes are disabled/u);
+  assert.doesNotMatch(text, /request_write_approval|approve_write|Apply with|postWrite\.ready/u);
 });
 
-test("promptText mentions elicitation approval and fallback when required", () => {
+test("read-only diagnose prompt preserves diagnostic readiness verification", () => {
+  const text = promptText(config(), "diagnose", "Demo");
+
+  assert.match(text, /Mode: read_only/u);
+  assert.match(text, /nodel\.verify_node_ready to summarize probe results and current-runtime console errors/u);
+  assert.doesNotMatch(text, /request_write_approval|approve_write|Apply with|postWrite|after the reload/u);
+});
+
+test("promptText inherits native-first approval and terminal denial guidance", () => {
   const text = promptText(config({ writesEnabled: true, writeApprovalRequired: true }), "recipe_script", "Demo");
 
   assert.match(text, /nodel\.request_write_approval/u);
   assert.match(text, /nodel\.approve_write/u);
+  assert.match(text, /do not ask for duplicate chat approval/u);
+  assert.match(text, /outcome=approved/u);
+  assert.match(text, /never retry or fall back/u);
+  assert.match(text, /fallbackAvailable=true/u);
+  assert.match(text, /obtain explicit operator approval of the exact confirmText before calling nodel\.approve_write/u);
 });
 
 test("promptText omits approval requirement when approval disabled", () => {
