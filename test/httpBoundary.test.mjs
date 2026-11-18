@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
+import { Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createTestConfig } from "../dist/config.js";
 import { createHttpApp, startHttpServer } from "../dist/mcp/server.js";
 import { collectToolSpecs } from "../dist/mcp/registry/toolRegistry.js";
@@ -124,6 +128,7 @@ function mutableParameterClient() {
 /** @param {{ failure?: unknown, readinessFailure?: boolean }} options */
 async function fakeNodelRuntime({ failure, readinessFailure = false } = {}) {
   let parameters = { retained: true };
+  let writes = 0;
   const sockets = new Set();
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://fake-nodel.invalid");
@@ -143,6 +148,7 @@ async function fakeNodelRuntime({ failure, readinessFailure = false } = {}) {
       let text = "";
       for await (const chunk of req) text += chunk;
       parameters = JSON.parse(text);
+      writes += 1;
       return send(200, { saved: true });
     }
     return send(404, "secret=missing-secret", "text/plain");
@@ -160,6 +166,12 @@ async function fakeNodelRuntime({ failure, readinessFailure = false } = {}) {
     baseUrl: `http://127.0.0.1:${port}`,
     get parameters() {
       return parameters;
+    },
+    get writes() {
+      return writes;
+    },
+    resetParameters(value) {
+      parameters = value;
     },
     async close() {
       for (const socket of sockets) socket.destroy();
@@ -385,6 +397,33 @@ test("stateless MCP envelopes initialize, list tools, ping, and clean transports
   }
 });
 
+test("incompatible SDK cancellation boundary rejects startup before listen and releases the state lock", async (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), "nodel-ai-sdk-startup-"));
+  const originalGet = Reflect.get;
+  const get = t.mock.method(Reflect, "get", (target, property, ...rest) =>
+    property === "_requestHandlerAbortControllers" ? undefined : originalGet(target, property, ...rest),
+  );
+  const listen = t.mock.method(NetServer.prototype, "listen", () => {
+    throw new Error("HTTP must not listen with an incompatible SDK boundary");
+  });
+  try {
+    await assert.rejects(
+      startHttpServer(createTestConfig({ stateDir, mcpPort: 0 }), { nodelClient: fakeNodel() }),
+      /Unsupported SDK request cancellation boundary/u,
+    );
+    assert.equal(listen.mock.callCount(), 0);
+    assert.equal(existsSync(join(stateDir, ".instance.lock")), false);
+    get.mock.restore();
+    listen.mock.restore();
+    const server = await startHttpServer(createTestConfig({ stateDir, mcpPort: 0 }), { nodelClient: fakeNodel() });
+    await server.shutdown();
+  } finally {
+    get.mock.restore();
+    listen.mock.restore();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("bounded shutdown is idempotent and releases the state lock", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "nodel-ai-http-shutdown-"));
   try {
@@ -472,6 +511,14 @@ test("real Nodel HTTP transport completes MCP proposal, approval, parameter appl
     const proposed = await callTool(app.baseUrl, "nodel.set_node_parameters", input);
     assert.equal(proposed.result.status, "dry_run");
     const approval = proposed.result.approvalRequest;
+    assert.match(approval.instructions, /resultOk=true and outcome=approved/u);
+    assert.match(approval.instructions, /fallbackAvailable=true/u);
+    assert.match(
+      approval.instructions,
+      /obtain explicit operator approval of the exact confirmText before calling nodel\.approve_write/u,
+    );
+    assert.match(approval.instructions, /tool returns ok=true/u);
+    assert.match(approval.instructions, /do not ask for duplicate chat approval/u);
     const approved = await callTool(
       app.baseUrl,
       "nodel.approve_write",
@@ -505,6 +552,109 @@ test("real Nodel HTTP transport completes MCP proposal, approval, parameter appl
     const readBack = await callTool(app.baseUrl, "nodel.get_node_parameters", { node: "Demo" }, 53);
     assert.deepEqual(readBack.result.parameters, { retained: true, brightness: 75 });
   } finally {
+    await app.close();
+    await nodel.close();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("native approval drives fake-runtime proposal, confirmation, apply, and read-back; rejection and reuse do not write", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "nodel-ai-http-native-write-"));
+  const nodel = await fakeNodelRuntime();
+  const app = await bind(
+    createTestConfig({
+      stateDir,
+      nodelBaseUrl: nodel.baseUrl,
+      writesEnabled: true,
+      writeApprovalRequired: true,
+      postWriteSettleMs: 0,
+    }),
+    null,
+  );
+  const transport = new StreamableHTTPClientTransport(new URL(`${app.baseUrl}/mcp`));
+  const client = new Client(
+    { name: "native-fake-runtime-test", version: "1" },
+    { capabilities: { elicitation: { form: {} } } },
+  );
+  let approved = false;
+  try {
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      assert.equal(request.params.mode, "form");
+      assert.deepEqual(request.params.requestedSchema.required, ["approved"]);
+      assert.equal(request.params.requestedSchema.properties.approved.default, false);
+      assert.match(request.params.message, /Full proposal hash:/u);
+      return { action: "accept", content: { approved } };
+    });
+    await client.connect(transport);
+    const proposalResponse = await client.callTool({
+      name: "nodel.set_node_parameters",
+      arguments: { node: "Demo", values: { native: true }, dryRun: true, waitForReady: false },
+    });
+    const proposal = JSON.parse(proposalResponse.content[0].text);
+    assert.equal(proposal.status, "dry_run");
+    const approvalRequest = proposal.approvalRequest;
+    const args = {
+      operation: approvalRequest.operation,
+      target: approvalRequest.target,
+      proposalHash: approvalRequest.proposalHash,
+      confirmText: approvalRequest.confirmText,
+    };
+
+    const rejectedResponse = await client.callTool({ name: "nodel.request_write_approval", arguments: args });
+    const rejected = JSON.parse(rejectedResponse.content[0].text);
+    assert.equal(rejected.outcome, "not_approved");
+    assert.equal(rejected.fallbackAvailable, false);
+    assert.equal("approvalId" in rejected, false);
+    assert.deepEqual(nodel.parameters, { retained: true });
+    assert.equal(nodel.writes, 0);
+    const deniedApplyResponse = await client.callTool({
+      name: "nodel.set_node_parameters",
+      arguments: { node: "Demo", values: { native: true }, waitForReady: false },
+    });
+    const deniedApply = JSON.parse(deniedApplyResponse.content[0].text);
+    assert.equal(deniedApply.error.code, "APPROVAL_REQUIRED");
+    assert.equal(nodel.writes, 0);
+
+    approved = true;
+    const approvalResponse = await client.callTool({ name: "nodel.request_write_approval", arguments: args });
+    const approval = JSON.parse(approvalResponse.content[0].text);
+    assert.equal(approval.outcome, "approved");
+    assert.ok(approval.approvalId);
+    const appliedResponse = await client.callTool({
+      name: "nodel.set_node_parameters",
+      arguments: {
+        node: "Demo",
+        values: { native: true },
+        approvalId: approval.approvalId,
+        waitForReady: false,
+      },
+    });
+    const applied = JSON.parse(appliedResponse.content[0].text);
+    assert.equal(applied.status, "succeeded_verification_pending");
+    assert.deepEqual(nodel.parameters, { retained: true, native: true });
+    assert.equal(nodel.writes, 1);
+    const readBackResponse = await client.callTool({ name: "nodel.get_node_parameters", arguments: { node: "Demo" } });
+    const readBack = JSON.parse(readBackResponse.content[0].text);
+    assert.deepEqual(readBack.parameters, { retained: true, native: true });
+    nodel.resetParameters({ retained: true });
+    const reusedResponse = await client.callTool({
+      name: "nodel.set_node_parameters",
+      arguments: {
+        node: "Demo",
+        values: { native: true },
+        approvalId: approval.approvalId,
+        waitForReady: false,
+      },
+    });
+    const reused = JSON.parse(reusedResponse.content[0].text);
+    assert.equal(reused.ok, false);
+    assert.equal(reused.error.code, "APPROVAL_REQUIRED");
+    assert.equal(reused.error.message, "Write approval was not found or has expired.");
+    assert.equal(nodel.writes, 1);
+    assert.deepEqual(nodel.parameters, { retained: true });
+  } finally {
+    await transport.terminateSession();
+    await client.close();
     await app.close();
     await nodel.close();
     rmSync(stateDir, { recursive: true, force: true });

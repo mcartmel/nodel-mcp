@@ -40,8 +40,8 @@ Tool-specific success output schemas are not claimed because handlers return dom
 | `nodel.list_public_recipes` | read | preview | always | List public recipes from museumsvictoria/nodel-recipes. |
 | `nodel.read_public_recipe` | read | preview | always | Read selected files from a public museumsvictoria/nodel-recipes recipe directory. |
 | `nodel.read_toolkit` | read | preview | always | Read the Nodel scripting toolkit from /REST/Toolkit. |
-| `nodel.approve_write` | write | experimental | writes | Manual/fallback approval path. Create a short-lived approval id only after explicit operator approval of the matching full proposalHash and confirmText. This is a workflow guardrail dependent on client/operator discipline, not an authentication boundary. |
-| `nodel.request_write_approval` | write | experimental | writes | Ask the MCP client to elicit operator confirmation for a proposed write where supported, then mint the same approval id as nodel.approve_write. Falls back to manual approval instructions when elicitation is unavailable. |
+| `nodel.approve_write` | write | experimental | writes | Compatibility-only manual/fallback approval path when nodel.request_write_approval reports fallbackAvailable. Create a short-lived approval id only after explicit operator approval of the matching full proposalHash and confirmText. This is a workflow guardrail dependent on client/operator discipline, not an authentication boundary. |
+| `nodel.request_write_approval` | write | experimental | writes | Request native checkbox confirmation for a reviewed write proposal, then mint a single-use approval id without applying it. Native elicitation is the user confirmation step. Only known unsupported clients or explicit fallbackOnly receive manual fallback instructions; stop after decline, cancel, invalid response, or failure. |
 | `nodel.read_signal` | read | preview | always | Read a signal/event value by name. Endpoint behavior is runtime-dependent; falls back to REST/events/<name>. |
 | `nodel.get_node_parameters` | read | preview | always | Read node parameters using the conventional REST/params endpoint. |
 | `nodel.propose_node_bindings` | proposal | experimental | always | Plan remote action/event bindings from one node to a target node using binding schema and target actions/signals. No changes are applied. Use nodel.verify_write_plan before approval/apply. |
@@ -1150,6 +1150,12 @@ Tool-specific success output schemas are not claimed because handlers return dom
     "fallbackOnly": {
       "default": false,
       "type": "boolean"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "Optional assistant-supplied context, not server-verified. Summarize changes and consequences (reloads, restarts, overwrites) without secrets."
     }
   },
   "required": [

@@ -28,7 +28,7 @@ export function approvalRequest(config: AppConfig, details: ApprovalDetails) {
     instructions: !config.writesEnabled
       ? "Writes are currently disabled. Enable write gates before requesting approval or applying this proposal."
       : required
-        ? "After explicit operator approval, call nodel.approve_write with this operation, target, proposalHash, and confirmText. The manual fallback is a workflow guardrail, not an independent authorization boundary."
+        ? "Review and verify the detailed proposal, then call nodel.request_write_approval with this operation, target, proposalHash, and confirmText. Native elicitation is the user confirmation step; do not ask for duplicate chat approval. Apply the native approvalId only when resultOk=true and outcome=approved. If and only if fallbackAvailable=true (known unavailable elicitation or explicit fallbackOnly), obtain explicit operator approval of the exact confirmText before calling nodel.approve_write; apply its approvalId only when that tool returns ok=true and an approvalId. Stop on decline, cancellation, invalid response, or failure; do not use fallback for those outcomes. Approval is a workflow guardrail, not an independent authorization boundary."
         : "Write approval is not required by current sidecar configuration.",
   };
 }
@@ -43,14 +43,7 @@ export function approveWrite(
 ) {
   if (!config.writesEnabled)
     throw publicError("POLICY", "Write approval is unavailable because write tools are disabled.");
-  assertNoBearer(details.operation, "operation");
-  assertNoBearer(details.target, "target");
-  assertNoBearer(reason, "reason");
-  assertNoBearer(approvedBy, "approvedBy");
-  if (!timingSafeStringEqual(providedConfirmText, confirmText(details.proposalHash))) {
-    throw publicError("APPROVAL_REQUIRED", "Approval confirmation mismatch.");
-  }
-  assertApprovalDetails(details);
+  validateApprovalInput(details, providedConfirmText, reason, approvedBy);
   const now = seams.now?.() ?? new Date();
   // This read-modify-write is synchronous. JavaScript cannot interleave it in
   // one event loop, and StateStore's startup lock excludes another process.
@@ -89,7 +82,7 @@ export function assertWriteApproved(
   if (!approvalId)
     throw publicError(
       "APPROVAL_REQUIRED",
-      `Write approval is required. Call nodel.approve_write for proposalHash ${details.proposalHash} and pass approvalId.`,
+      `Write approval is required. Call nodel.request_write_approval for proposalHash ${details.proposalHash} and pass approvalId only after an approved result.`,
     );
   const now = seams.now?.() ?? new Date();
   const envelope = loadApprovals(config, seams);
@@ -183,6 +176,30 @@ function confirmText(proposalHash: string) {
   return `APPROVE ${proposalHash.slice(0, 12)}`;
 }
 
+/** Side-effect-free preflight, repeated at mint time for native and manual approvals. */
+export function validateApprovalInput(
+  details: ApprovalDetails,
+  providedConfirmText: string,
+  reason?: string,
+  approvedBy?: string,
+) {
+  assertApprovalDetails(details);
+  for (const [field, value] of Object.entries({ operation: details.operation, target: details.target })) {
+    assertNoBearer(value, field);
+  }
+  for (const [field, value] of Object.entries({ reason, approvedBy })) {
+    if (value !== undefined && typeof value !== "string")
+      throw publicError("VALIDATION", `Approval ${field} must be a string.`);
+    assertNoBearer(value, field);
+  }
+  if (
+    typeof providedConfirmText !== "string" ||
+    !timingSafeStringEqual(providedConfirmText, confirmText(details.proposalHash))
+  ) {
+    throw publicError("APPROVAL_REQUIRED", "Approval confirmation mismatch.");
+  }
+}
+
 function assertNoBearer(value: string | undefined, field: string) {
   if (value && /Bearer\s+[A-Za-z0-9._~+/=-]+/iu.test(value))
     throw publicError("VALIDATION", `Approval ${field} must not contain a bearer token.`);
@@ -221,7 +238,7 @@ function isNonEmpty(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 function isSha256(value: unknown): value is string {
-  return typeof value === "string" && /^[a-f0-9]{64}$/iu.test(value);
+  return typeof value === "string" && value.length === 64 && /^[a-f0-9]{64}$/iu.test(value);
 }
 function isValidTimestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
