@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { CancelledNotificationSchema, type RequestId } from "@modelcontextprotocol/sdk/types.js";
 
 type ToolErrorResult = ReturnType<McpServer["createToolError"]>;
 
@@ -27,6 +28,17 @@ export function normalizeSdkToolError(errorMessage: string): ToolErrorResult {
 export class StableMcpServer extends McpServer {
   constructor(...args: ConstructorParameters<typeof McpServer>) {
     super(...args);
+    // SDK 1.32.2's default cancellation handler drops valid falsy request IDs
+    // (0 and ""). Keep the workaround local to our pinned SDK boundary, using
+    // its notification registration API and the same per-request controllers.
+    // Refuse to start if the private compatibility seam changes on an upgrade:
+    // silently losing cancellation would be unsafe for approval handlers.
+    const controllers: unknown = Reflect.get(this.server, "_requestHandlerAbortControllers");
+    if (!(controllers instanceof Map)) throw new Error("Unsupported SDK request cancellation boundary.");
+    const requestControllers = controllers as Map<RequestId, AbortController>;
+    this.server.setNotificationHandler(CancelledNotificationSchema, ({ params }) => {
+      if (params.requestId !== undefined) requestControllers.get(params.requestId)?.abort(params.reason);
+    });
     // The SDK marks createToolError private in its declarations but dispatches it
     // dynamically from the request handler. Keep the compatibility seam local.
     Object.defineProperty(this, "createToolError", {

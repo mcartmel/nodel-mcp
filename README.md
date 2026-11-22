@@ -226,14 +226,31 @@ return `401`; `/healthz` is the unauthenticated `200` preflight.
 This project treats write approval as a human workflow control, not a security
 boundary. Operational flow is:
 
-1. `read/propose` or `dryRun`
-2. Operator review and confirmation
-3. `nodel.approve_write` as a fallback when MCP elicitation is unavailable
-4. Apply tool with `approvalId`
-5. Read-back / readiness verification based on tool capability
+1. `read/propose` or `dryRun`; inspect and verify the full proposal, including its target, hash, warnings, and consequences.
+2. Call `nodel.request_write_approval` with the exact proposal identity. On clients that support MCP form elicitation, this presents an unchecked-by-default boolean confirmation; it is itself the user confirmation step, so do not ask for duplicate chat approval first.
+3. For native approval, apply its `approvalId` only when `resultOk=true` and `outcome=approved`. Stop without applying or falling back after decline, cancellation, invalid response, or failure. `fallbackAvailable=true` identifies the limited cases where manual compatibility approval is available.
+4. If and only if `fallbackAvailable=true`, obtain explicit operator approval of the exact `confirmText` before calling `nodel.approve_write`; apply its ID only when the manual tool returns `ok=true` and an `approvalId`. Manual approval does not return native `outcome=approved`.
+5. Read back and verify the result / readiness based on tool capability.
 
-`nodel.request_write_approval` is the MCP-native path when supported by the
-client and falls back to manual confirmation guidance when unsupported.
+The optional native-approval summary is assistant-supplied, unverified context,
+not part of the proposal hash; keep it concise and free of secrets. MCP clients
+control how the boolean form is rendered and must advertise form elicitation.
+No particular checkbox label or universal client support is guaranteed. The
+typed `nodel.approve_write` tool remains a compatibility workflow, not an
+independent authentication boundary. Manual approval remains callable and a
+decline does not durably prevent a later, separately requested approval.
+Approval forms are separate from MCP client tool-permission dialogs.
+When configuration does not require approval, proposals report
+`approvalRequest.required=false`; skip approval tools and proceed through the
+configured write workflow without inventing a confirmation step. If
+`nodel.request_write_approval` is unnecessarily called, the helper returns
+`outcome=not_required` without prompting or issuing an approval ID.
+
+**Client compatibility note:** older clients with hard-coded text elicitation
+handlers must update their response to the advertised boolean form schema and
+return strict `content.approved: true|false`. A legacy confirmText-only
+elicitation response is invalid (or may be rejected by SDK schema validation),
+fails closed, and does not trigger manual fallback.
 
 ## Operations and Service Deployment
 
