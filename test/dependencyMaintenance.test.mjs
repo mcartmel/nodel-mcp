@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import test from "node:test";
-import yaml from "js-yaml";
+import { load } from "js-yaml";
 
 const require = createRequire(import.meta.url);
 
@@ -77,7 +77,8 @@ test("c8 test-exclude globs keep include, exclude, and node_modules behavior", (
 
 async function dependabotConfig(overrides = {}) {
   const source = await readFile(".github/dependabot.yml", "utf8");
-  const config = yaml.load(source);
+  const config = load(source);
+  assert.ok(config && typeof config === "object" && "updates" in config && Array.isArray(config.updates));
   const npm = config.updates.find((entry) => entry["package-ecosystem"] === "npm");
   const actions = config.updates.find((entry) => entry["package-ecosystem"] === "github-actions");
 
@@ -187,7 +188,9 @@ test("workflow actions use the approved immutable action commits", async () => {
   const actionsByWorkflow = new Map();
 
   for (const path of workflowPaths) {
-    const workflow = yaml.load(await readFile(path, "utf8"));
+    const workflow = load(await readFile(path, "utf8"));
+    assert.ok(workflow && typeof workflow === "object" && "jobs" in workflow);
+    assert.ok(workflow.jobs && typeof workflow.jobs === "object");
     const actions = [];
     for (const job of Object.values(workflow.jobs ?? {})) {
       for (const step of job.steps ?? []) {
