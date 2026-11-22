@@ -175,8 +175,8 @@ test("workflow actions use the approved immutable action commits", async () => {
     ["gitleaks/gitleaks-action", "e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e"],
     ["github/codeql-action/init", "33d7b85da1a04171e211befe2c739303b9a4c066"],
     ["github/codeql-action/analyze", "33d7b85da1a04171e211befe2c739303b9a4c066"],
-    ["actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"],
-    ["actions/attest-build-provenance", "e8998f949152b193b063cb0ec769d69d929409be"],
+    ["actions/upload-artifact", "cf430e030ddbb5b0abf93d22962f4752f3646cd9"],
+    ["actions/attest-build-provenance", "4d101475d8b20a2381f78447822ac1eab6504dd8"],
   ]);
   const workflowPaths = [
     ".github/workflows/ci.yml",
